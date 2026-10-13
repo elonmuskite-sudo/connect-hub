@@ -237,3 +237,21 @@ alter publication supabase_realtime add table public.contacts;
 alter publication supabase_realtime add table public.messages;
 alter publication supabase_realtime add table public.chat_members;
 alter publication supabase_realtime add table public.storage_purchases;
+-- 20261013212651_a266bd67-bc53-4083-af85-83df904ae8ad.sql
+create unique index if not exists identity_verifications_user_id_key on public.identity_verifications(user_id);
+create or replace function public.stamp_idv_review() returns trigger language plpgsql set search_path = public as $$
+begin
+  if new.status in ('approved','rejected') and new.status is distinct from old.status then
+    new.reviewed_by := auth.uid(); new.reviewed_at := now();
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_idv_review on public.identity_verifications;
+create trigger trg_idv_review before update on public.identity_verifications for each row execute function public.stamp_idv_review();-- README.md
+# Supabase migrations
+
+- Add each schema change as a new `YYYYMMDDHHMMSS_description.sql` file in this directory.
+- Never rewrite a migration after it has been applied; the runner stores and checks each SHA-256 checksum in `public.nexus_schema_migrations`.
+- Review pending files with `npm run db:setup:dry`, then have an operator apply them using `npm run db:setup` from a trusted terminal with `SUPABASE_DB_URL` in the ignored local `.env.local`.
+- Build validation and browser code must not execute SQL. Do not upload `SUPABASE_DB_URL` to Vercel or expose it through a `VITE_` variable.
+- The CLI uses a transaction and PostgreSQL advisory lock. Review destructive statements before applying; use a new forward migration for corrections.
