@@ -50,6 +50,7 @@ function App() {
               <Route path="contacts" element={<ContactsPanel />} />
               <Route path="feeds" element={<FeedsPage />} />
               <Route path="payment/:purchaseId" element={<PaymentStatusPage />} />
+              <Route path="invoice/:purchaseId" element={<InvoicePage />} />
             </Route>
             <Route
               path="/admin"
