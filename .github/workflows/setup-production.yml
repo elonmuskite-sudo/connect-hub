@@ -1,0 +1,115 @@
+name: Set up production (Supabase database + Vercel env)
+
+# Run from GitHub → Actions → "Set up production" → Run workflow.
+# You are prompted for the Supabase address and anon key (both browser-safe).
+# Server-only values come from GitHub repo secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_DB_URL, SUPABASE_SERVICE_ROLE_KEY, VERCEL_TOKEN, VERCEL_PROJECT_ID, VERCEL_ORG_ID,
+#   SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF, RESEND_API_KEY, RESEND_FROM,
+#   NOWPAYMENTS_API_KEY, NOWPAYMENTS_IPN_SECRET
+on:
+  workflow_dispatch:
+    inputs:
+      supabase_url:
+        description: 'Supabase project address (https://xxxx.supabase.co)'
+        required: true
+      supabase_anon_key:
+        description: 'Supabase anon / publishable key'
+        required: true
+      run_sql:
+        description: 'Initialize database schema (fresh Supabase project only; leave unchecked for existing projects)'
+        type: boolean
+        default: false
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run database schema
+        if: ${{ inputs.run_sql }}
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          test -n "$SUPABASE_DB_URL" || { echo "Add the SUPABASE_DB_URL repo secret first."; exit 1; }
+          sudo apt-get install -y -qq postgresql-client >/dev/null
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 --single-transaction -f docs/supabase-schema.sql
+
+      - uses: supabase/setup-cli@v3
+        with:
+          version: 2.117.0
+
+      - name: Set NOWPayments Edge Function secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          NOWPAYMENTS_API_KEY: ${{ secrets.NOWPAYMENTS_API_KEY }}
+          NOWPAYMENTS_IPN_SECRET: ${{ secrets.NOWPAYMENTS_IPN_SECRET }}
+        run: |
+          test -n "$SUPABASE_ACCESS_TOKEN" || { echo "Add SUPABASE_ACCESS_TOKEN to GitHub repo secrets first."; exit 1; }
+          test -n "$SUPABASE_PROJECT_REF" || { echo "Add SUPABASE_PROJECT_REF to GitHub repo secrets first."; exit 1; }
+          test -n "$NOWPAYMENTS_API_KEY" || { echo "Add NOWPAYMENTS_API_KEY to GitHub repo secrets first."; exit 1; }
+          test -n "$NOWPAYMENTS_IPN_SECRET" || { echo "Add NOWPAYMENTS_IPN_SECRET to GitHub repo secrets first."; exit 1; }
+          umask 077
+          secret_file="$(mktemp)"
+          trap 'rm -f "$secret_file"' EXIT
+          printf 'NOWPAYMENTS_API_KEY=%s\nNOWPAYMENTS_IPN_SECRET=%s\n' "$NOWPAYMENTS_API_KEY" "$NOWPAYMENTS_IPN_SECRET" > "$secret_file"
+          supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" --env-file "$secret_file"
+
+      - name: Add environment variables to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          IN_URL: ${{ inputs.supabase_url }}
+          IN_ANON: ${{ inputs.supabase_anon_key }}
+          SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM }}
+        run: |
+          test -n "$VERCEL_TOKEN" && test -n "$VERCEL_PROJECT_ID" || { echo "Add VERCEL_TOKEN and VERCEL_PROJECT_ID repo secrets first."; exit 1; }
+          test -n "$SERVICE_ROLE" || { echo "Add SUPABASE_SERVICE_ROLE_KEY to GitHub repo secrets first."; exit 1; }
+          test -n "$RESEND_API_KEY" || { echo "Add RESEND_API_KEY to GitHub repo secrets first."; exit 1; }
+          test -n "$RESEND_FROM" || { echo "Add RESEND_FROM to GitHub repo secrets first."; exit 1; }
+          team_query=""
+          if [ -n "$VERCEL_ORG_ID" ]; then team_query="?teamId=$VERCEL_ORG_ID"; fi
+          list_query="limit=100"
+          if [ -n "$VERCEL_ORG_ID" ]; then list_query="$list_query&teamId=$VERCEL_ORG_ID"; fi
+          env_file="$(mktemp)"
+          response_file="$(mktemp)"
+          trap 'rm -f "$env_file" "$response_file"' EXIT
+          umask 077
+          code=$(curl -sS -o "$env_file" -w '%{http_code}' "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID/env?$list_query" \
+            -H "Authorization: Bearer $VERCEL_TOKEN")
+          [ "$code" -lt 300 ] && jq -e '.envs | type == "array"' "$env_file" >/dev/null || { echo "Failed to list Vercel environment variables (HTTP $code)."; exit 1; }
+          put() { # name value type
+            [ -n "$2" ] || { echo "Missing value for $1."; exit 1; }
+            body=$(jq -n --arg k "$1" --arg v "$2" --arg t "$3" '{key:$k,value:$v,type:$t,target:["production","preview"]}')
+            match_count=$(jq --arg key "$1" '[.envs[]? | select(.key == $key and ((.target // []) | index("production")) and ((.gitBranch // "") == ""))] | length' "$env_file")
+            if [ "$match_count" -gt 1 ]; then
+              echo "Multiple Production variables exist for $1; resolve duplicates in Vercel first."
+              exit 1
+            fi
+
+            if [ "$match_count" -eq 1 ]; then
+              env_id=$(jq -r --arg key "$1" '.envs[] | select(.key == $key and ((.target // []) | index("production")) and ((.gitBranch // "") == "")) | .id' "$env_file")
+              endpoint="https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID/env/$env_id$team_query"
+              method="PATCH"
+              label="Updated"
+            else
+              endpoint="https://api.vercel.com/v10/projects/$VERCEL_PROJECT_ID/env$team_query"
+              method="POST"
+              label="Added"
+            fi
+            code=$(curl -sS -o "$response_file" -w '%{http_code}' -X "$method" "$endpoint" \
+              -H "Authorization: Bearer $VERCEL_TOKEN" -H 'Content-Type: application/json' -d "$body")
+            [ "$code" -lt 300 ] && echo "$label $1 (Production and Preview)" || { echo "Failed to set $1 in Vercel (HTTP $code)."; exit 1; }
+          }
+          put VITE_SUPABASE_URL "$IN_URL" plain
+          put SUPABASE_URL "$IN_URL" plain
+          put VITE_SUPABASE_ANON_KEY "$IN_ANON" plain
+          put SUPABASE_ANON_KEY "$IN_ANON" plain
+          put SUPABASE_SERVICE_ROLE_KEY "$SERVICE_ROLE" sensitive
+          put RESEND_API_KEY "$RESEND_API_KEY" sensitive
+          put RESEND_FROM "$RESEND_FROM" plain
+          echo "Done. Redeploy in Vercel to apply."

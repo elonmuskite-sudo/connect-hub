@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nexus Chat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <div id="root" class="h-screen flex flex-col">
+    <!-- Home Component -->
+    <div class="flex flex-1 overflow-hidden">
+      <!-- Chat Sidebar (Telegram Style) -->
+      <div class="w-full md:w-96 bg-white border-r border-gray-200 flex flex-col">
+        <!-- Header -->
+        <div class="bg-[#0088cc] text-white px-4 py-3 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <button class="p-1.5 hover:bg-white/10 rounded-full transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6">
+                <line x1="3" x2="21" y1="12" y2="12"></line>
+                <line x1="3" x2="21" y1="6" y2="6"></line>
+                <line x1="3" x2="21" y1="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+          <div class="flex items-center gap-2">
+            <button class="p-1.5 hover:bg-white/10 rounded-full transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="m21 21-4.3-4.3"></path>
+              </svg>
+            </button>
+            <button class="p-1.5 hover:bg-white/10 rounded-full transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
+                <path d="M5 12h14"></path>
+                <path d="M12 5v14"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Search -->
+        <div class="p-3 bg-gray-50">
+          <div class="relative">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400">
+              <circle cx="11" cy="11" r="8"></circle>
+              <path d="m21 21-4.3-4.3"></path>
+            </svg>
+            <input type="text" placeholder="Search" class="w-full pl-10 pr-4 py-2 bg-white border border-gray-200 rounded-full text-gray-900 focus:outline-none focus:border-[#0088cc]">
+          </div>
+        </div>
+
+        <!-- Story Bar -->
+        <div class="border-b border-gray-200 p-3">
+          <div class="flex gap-4 overflow-x-auto pb-1">
+            <!-- Your Story -->
+            <div class="flex flex-col items-center gap-1">
+              <div class="relative">
+                <div class="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-semibold">
+                  <span class="text-sm">YO</span>
+                </div>
+                <div class="absolute bottom-0 right-0 w-5 h-5 bg-[#0088cc] rounded-full flex items-center justify-center text-white text-xs font-bold border-2 border-white">+</div>
+              </div>
+              <span class="text-xs text-gray-600">Your Story</span>
+            </div>
+            <!-- Alice Smith (unviewed) -->
+            <div class="flex flex-col items-center gap-1">
+              <div class="w-12 h-12 rounded-full bg-[#0088cc] flex items-center justify-center text-white font-semibold">
+                <span class="text-sm">AS</span>
+              </div>
+              <span class="text-xs text-gray-600 truncate w-16 text-center">Alice Smith</span>
+            </div>
+            <!-- Bob Johnson (viewed) -->
+            <div class="flex flex-col items-center gap-1">
+              <div class="w-12 h-12 rounded-full bg-gray-400 flex items-center justify-center text-white font-semibold">
+                <span class="text-sm">BJ</span>
+              </div>
+              <span class="text-xs text-gray-600 truncate w-16 text-center">Bob Johnson</span>
+            </div>
+            <!-- Charlie Brown (unviewed) -->
+            <div class="flex flex-col items-center gap-1">
+              <div class="w-12 h-12 rounded-full bg-[#0088cc] flex items-center justify-center text-white font-semibold">
+                <span class="text-sm">CB</span>
+              </div>
+              <span class="text-xs text-gray-600 truncate w-16 text-center">Charlie Brown</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chats List -->
+        <div class="flex-1 overflow-y-auto">
+          <!-- Alice Smith (selected) -->
+          <div class="flex items-center p-3 cursor-pointer hover:bg-gray-50 transition-colors bg-gray-100">
+            <div class="w-12 h-12 rounded-full bg-[#0088cc] flex items-center justify-center text-white font-semibold flex-shrink-0">
+              <span class="text-sm">AS</span>
+            </div>
+            <div class="ml-3 flex-1 min-w-0">
+              <div class="flex justify-between items-baseline">
+                <h3 class="text-sm font-semibold text-gray-900 truncate">Alice Smith</h3>
+                <span class="text-xs text-gray-500 ml-2">1:00 PM</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <p class="text-sm text-gray-500 truncate">Hey, how are you?</p>
+                <span class="ml-2 bg-[#0088cc] text-white text-xs font-semibold w-5 h-5 flex items-center justify-center rounded-full">2</span>
+              </div>
+            </div>
+          </div>
+          <!-- Nexus Team -->
+          <div class="flex items-center p-3 cursor-pointer hover:bg-gray-50 transition-colors">
+            <div class="w-12 h-12 rounded-full bg-[#0088cc] flex items-center justify-center text-white font-semibold flex-shrink-0">
+              <span class="text-sm">NT</span>
+            </div>
+            <div class="ml-3 flex-1 min-w-0">
+              <div class="flex justify-between items-baseline">
+                <h3 class="text-sm font-semibold text-gray-900 truncate">Nexus Team</h3>
+                <span class="text-xs text-gray-500 ml-2">12:00 PM</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <p class="text-sm text-gray-500 truncate">Meeting tomorrow at 10am</p>
+              </div>
+            </div>
+          </div>
+          <!-- Bob Johnson -->
+          <div class="flex items-center p-3 cursor-pointer hover:bg-gray-50 transition-colors">
+            <div class="w-12 h-12 rounded-full bg-gray-400 flex items-center justify-center text-white font-semibold flex-shrink-0">
+              <span class="text-sm">BJ</span>
+            </div>
+            <div class="ml-3 flex-1 min-w-0">
+              <div class="flex justify-between items-baseline">
+                <h3 class="text-sm font-semibold text-gray-900 truncate">Bob Johnson</h3>
+                <span class="text-xs text-gray-500 ml-2">11:00 AM</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <p class="text-sm text-gray-500 truncate">Thanks for the help!</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat View (Telegram Style) -->
+      <div class="flex-1 flex flex-col bg-[url('https://i.imgur.com/0j0j0j0.png')] bg-repeat">
+        <!-- Chat Header -->
+        <div class="bg-[#0088cc] text-white px-4 py-2 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <button class="md:hidden p-1.5 hover:bg-white/10 rounded-full">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
+                <path d="M19 12H5M12 19l-7-7 7-7"></path>
+              </svg>
+            </button>
+            <div class="w-10 h-10 rounded-full bg-[#0088cc]/20 flex items-center justify-center text-white font-semibold">
+              <span class="text-sm">AS</span>
+            </div>
+            <div>
+              <h2 class="font-semibold">Alice Smith</h2>
+              <p class="text-xs text-white/80">Online</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button class="p-1.5 hover:bg-white/10 rounded-full">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+              </svg>
+            </button>
+            <button class="p-1.5 hover:bg-white/10 rounded-full">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
+                <circle cx="12" cy="12" r="1"></circle>
+                <circle cx="12" cy="5" r="1"></circle>
+                <circle cx="12" cy="19" r="1"></circle>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Messages (Telegram Style) -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-2">
+          <!-- Alice's message -->
+          <div class="flex justify-start">
+            <div class="max-w-[75%] bg-white px-4 py-2 rounded-2xl rounded-tl-none shadow-sm">
+              <p class="text-sm text-gray-900">Hey! How are you doing?</p>
+              <div class="text-xs text-gray-400 mt-1 text-right">1:00 PM</div>
+            </div>
+          </div>
+          <!-- My message -->
+          <div class="flex justify-end">
+            <div class="max-w-[75%] bg-[#e3f2fd] px-4 py-2 rounded-2xl rounded-tr-none">
+              <p class="text-sm text-gray-900">I'm doing great, thanks for asking!</p>
+              <div class="text-xs text-gray-500 mt-1 text-right">1:01 PM</div>
+            </div>
+          </div>
+          <!-- Alice's message -->
+          <div class="flex justify-start">
+            <div class="max-w-[75%] bg-white px-4 py-2 rounded-2xl rounded-tl-none shadow-sm">
+              <p class="text-sm text-gray-900">That's awesome to hear!</p>
+              <div class="text-xs text-gray-400 mt-1 text-right">1:01 PM</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Message Input (Telegram Style) -->
+        <div class="bg-white border-t border-gray-200 px-4 py-2">
+          <div class="flex items-center gap-2">
+            <button class="p-2 hover:bg-gray-100 rounded-full text-[#0088cc]">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.2"></path>
+              </svg>
+            </button>
+            <input type="text" placeholder="Write a message..." class="flex-1 px-4 py-3 bg-gray-100 border-none rounded-full text-gray-900 focus:outline-none">
+            <button class="p-2 bg-[#0088cc] hover:bg-[#006699] rounded-full text-white">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6">
+                <path d="M22 2L11 13"></path>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Nav (Mobile - Telegram Style) -->
+    <div class="md:hidden border-t border-gray-200 bg-white">
+      <div class="flex justify-around">
+        <!-- Chats Tab (Active) -->
+        <button class="flex flex-col items-center py-3 px-4 text-[#0088cc]">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <span class="text-xs mt-1">Chats</span>
+        </button>
+        <!-- Stories Tab -->
+        <button class="flex flex-col items-center py-3 px-4 text-gray-500">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6">
+            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+          <span class="text-xs mt-1">Stories</span>
+        </button>
+        <!-- Contacts Tab -->
+        <button class="flex flex-col items-center py-3 px-4 text-gray-500">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <span class="text-xs mt-1">Contacts</span>
+        </button>
+        <!-- Settings Tab -->
+        <button class="flex flex-col items-center py-3 px-4 text-gray-500">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1-1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1 1.65 1.65 0 0 0 1.82.33 2 2 0 1 0 2.83 2 2 0 0 1 0-2.83z"></path>
+          </svg>
+          <span class="text-xs mt-1">Settings</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
