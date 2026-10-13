@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./lib/AuthContext.jsx";
 import { SettingsProvider } from "./lib/SettingsContext.jsx";
@@ -57,11 +58,11 @@ function App() {
               path="/admin"
               element={
                 <AdminGuard>
-                  <AdminDashboard />
+                  <Suspense fallback={null}><AdminDashboard /></Suspense>
                 </AdminGuard>
               }
             />
-            <Route path="/admin/diagnostics" element={<AdminGuard><AdminDiagnostics /></AdminGuard>} />
+            <Route path="/admin/diagnostics" element={<AdminGuard><Suspense fallback={null}><AdminDiagnostics /></Suspense></AdminGuard>} />
             <Route path="/default-path" element={<Navigate to="/" replace />} />
             <Route path="*" element={<PageNotFound />} />
           </Routes>
