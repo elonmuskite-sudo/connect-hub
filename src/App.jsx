@@ -11,6 +11,7 @@ import SettingsPage from "./pages/SettingsPage.jsx";
 import ContactsPanel from "./components/chat/ContactsPanel.jsx";
 import FeedsPage from "./pages/FeedsPage.jsx";
 import PaymentStatusPage from "./pages/PaymentStatusPage.jsx";
+import InvoicePage from "./pages/InvoicePage.jsx";
 import AdminDashboard from "./pages/AdminDashboard.jsx";
 import AdminDiagnostics from "./pages/AdminDiagnostics.jsx";
 import AuthLanding from "./pages/AuthLanding.jsx";
