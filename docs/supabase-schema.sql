@@ -375,3 +375,41 @@ create policy "No client access" on public.auth_email_code_limits for all to aut
 create sequence if not exists public.invoice_number_seq start 1001;
 alter table public.storage_purchases add column if not exists invoice_number bigint unique default nextval('public.invoice_number_seq');
 grant usage on sequence public.invoice_number_seq to service_role;
+-- Admin member management (admin-only RPCs)
+create schema if not exists private;
+create or replace function private.admin_update_member(_member_id uuid, _first_name text, _last_name text, _bio text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.has_role(auth.uid(), 'admin') then raise exception 'Admins only'; end if;
+  update public.members set first_name = left(trim(_first_name),80), last_name = left(trim(_last_name),80),
+    full_name = left(trim(coalesce(_first_name,'')||' '||coalesce(_last_name,'')),161), bio = left(_bio,500), updated_at = now()
+  where id = _member_id;
+end $$;
+create or replace function private.admin_set_admin_role(_user_id uuid, _grant boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.has_role(auth.uid(), 'admin') then raise exception 'Admins only'; end if;
+  if _grant then
+    insert into public.user_roles(user_id, role) select _user_id, 'admin'
+    where not exists (select 1 from public.user_roles where user_id=_user_id and role='admin');
+  else
+    if _user_id = auth.uid() then raise exception 'You cannot remove your own admin role'; end if;
+    delete from public.user_roles where user_id=_user_id and role='admin';
+  end if;
+end $$;
+create or replace function private.admin_list_admins()
+returns table(user_id uuid) language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.has_role(auth.uid(), 'admin') then raise exception 'Admins only'; end if;
+  return query select r.user_id from public.user_roles r where r.role='admin';
+end $$;
+grant usage on schema private to authenticated;
+grant execute on function private.admin_update_member(uuid,text,text,text), private.admin_set_admin_role(uuid,boolean), private.admin_list_admins() to authenticated;
+create or replace function public.admin_update_member(_member_id uuid, _first_name text, _last_name text, _bio text)
+returns void language sql set search_path = public as $$ select private.admin_update_member(_member_id,_first_name,_last_name,_bio) $$;
+create or replace function public.admin_set_admin_role(_user_id uuid, _grant boolean)
+returns void language sql set search_path = public as $$ select private.admin_set_admin_role(_user_id,_grant) $$;
+create or replace function public.admin_list_admins()
+returns table(user_id uuid) language sql stable set search_path = public as $$ select * from private.admin_list_admins() $$;
+revoke all on function public.admin_update_member(uuid,text,text,text), public.admin_set_admin_role(uuid,boolean), public.admin_list_admins() from public, anon;
+grant execute on function public.admin_update_member(uuid,text,text,text), public.admin_set_admin_role(uuid,boolean), public.admin_list_admins() to authenticated;
