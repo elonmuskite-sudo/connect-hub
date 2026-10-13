@@ -323,6 +323,25 @@ export type Database = {
     }
     Functions: {
       admin_exists: { Args: never; Returns: boolean }
+      admin_list_admins: {
+        Args: never
+        Returns: {
+          user_id: string
+        }[]
+      }
+      admin_set_admin_role: {
+        Args: { _grant: boolean; _user_id: string }
+        Returns: undefined
+      }
+      admin_update_member: {
+        Args: {
+          _bio: string
+          _first_name: string
+          _last_name: string
+          _member_id: string
+        }
+        Returns: undefined
+      }
       claim_first_admin: { Args: never; Returns: undefined }
       consume_auth_email_code_limit: {
         Args: {
