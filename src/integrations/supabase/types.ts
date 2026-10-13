@@ -14,6 +14,7 @@ export type Database = {
   }
   public: {
     Tables: {
+<<<<<<< HEAD
       contacts: {
         Row: {
           avatar_url: string | null
@@ -38,6 +39,23 @@ export type Database = {
           name?: string
           nexus_id?: string
           user_id?: string
+=======
+      auth_email_code_limits: {
+        Row: {
+          bucket_key: string
+          count: number
+          window_start: string
+        }
+        Insert: {
+          bucket_key: string
+          count?: number
+          window_start?: string
+        }
+        Update: {
+          bucket_key?: string
+          count?: number
+          window_start?: string
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
         }
         Relationships: []
       }
@@ -48,6 +66,10 @@ export type Database = {
           id_document_path: string
           match_score: number | null
           reviewed_at: string | null
+<<<<<<< HEAD
+=======
+          reviewed_by: string | null
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
           reviewer_note: string | null
           selfie_path: string
           status: string
@@ -60,6 +82,10 @@ export type Database = {
           id_document_path: string
           match_score?: number | null
           reviewed_at?: string | null
+<<<<<<< HEAD
+=======
+          reviewed_by?: string | null
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
           reviewer_note?: string | null
           selfie_path: string
           status?: string
@@ -72,6 +98,10 @@ export type Database = {
           id_document_path?: string
           match_score?: number | null
           reviewed_at?: string | null
+<<<<<<< HEAD
+=======
+          reviewed_by?: string | null
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
           reviewer_note?: string | null
           selfie_path?: string
           status?: string
@@ -80,6 +110,7 @@ export type Database = {
         }
         Relationships: []
       }
+<<<<<<< HEAD
       payment_settings: {
         Row: {
           id: number
@@ -101,6 +132,89 @@ export type Database = {
           qr_image_url?: string | null
           updated_at?: string
           wallet_address?: string | null
+=======
+      members: {
+        Row: {
+          auth_user_id: string
+          avatar_url: string | null
+          bio: string | null
+          created_at: string
+          email: string
+          email_verified: boolean
+          first_name: string | null
+          full_name: string | null
+          id: string
+          interests: string[] | null
+          last_name: string | null
+          member_id: string
+          updated_at: string
+        }
+        Insert: {
+          auth_user_id: string
+          avatar_url?: string | null
+          bio?: string | null
+          created_at?: string
+          email: string
+          email_verified?: boolean
+          first_name?: string | null
+          full_name?: string | null
+          id: string
+          interests?: string[] | null
+          last_name?: string | null
+          member_id: string
+          updated_at?: string
+        }
+        Update: {
+          auth_user_id?: string
+          avatar_url?: string | null
+          bio?: string | null
+          created_at?: string
+          email?: string
+          email_verified?: boolean
+          first_name?: string | null
+          full_name?: string | null
+          id?: string
+          interests?: string[] | null
+          last_name?: string | null
+          member_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      payment_webhook_events: {
+        Row: {
+          error: string | null
+          id: string
+          order_id: string | null
+          outcome: string
+          payload: Json | null
+          payment_id: string | null
+          payment_status: string | null
+          received_at: string
+          signature_valid: boolean
+        }
+        Insert: {
+          error?: string | null
+          id?: string
+          order_id?: string | null
+          outcome?: string
+          payload?: Json | null
+          payment_id?: string | null
+          payment_status?: string | null
+          received_at?: string
+          signature_valid?: boolean
+        }
+        Update: {
+          error?: string | null
+          id?: string
+          order_id?: string | null
+          outcome?: string
+          payload?: Json | null
+          payment_id?: string | null
+          payment_status?: string | null
+          received_at?: string
+          signature_valid?: boolean
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
         }
         Relationships: []
       }
@@ -122,7 +236,11 @@ export type Database = {
           created_at?: string
           duration_seconds?: number | null
           file_name: string
+<<<<<<< HEAD
           file_type?: string
+=======
+          file_type: string
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
           id?: string
           mime_type?: string | null
           size_bytes?: number
@@ -151,11 +269,17 @@ export type Database = {
           created_at: string
           currency: string
           id: string
+<<<<<<< HEAD
           payment_method: string
           receipt_url: string | null
           status: string
           tier: string
           tx_reference: string | null
+=======
+          receipt_url: string | null
+          status: string
+          tier: string
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
           updated_at: string
           user_id: string
         }
@@ -166,11 +290,17 @@ export type Database = {
           created_at?: string
           currency?: string
           id?: string
+<<<<<<< HEAD
           payment_method?: string
           receipt_url?: string | null
           status?: string
           tier: string
           tx_reference?: string | null
+=======
+          receipt_url?: string | null
+          status?: string
+          tier: string
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
           updated_at?: string
           user_id: string
         }
@@ -181,11 +311,17 @@ export type Database = {
           created_at?: string
           currency?: string
           id?: string
+<<<<<<< HEAD
           payment_method?: string
           receipt_url?: string | null
           status?: string
           tier?: string
           tx_reference?: string | null
+=======
+          receipt_url?: string | null
+          status?: string
+          tier?: string
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
           updated_at?: string
           user_id?: string
         }
@@ -193,16 +329,28 @@ export type Database = {
       }
       user_roles: {
         Row: {
+<<<<<<< HEAD
+=======
+          created_at: string
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
           id: string
           role: Database["public"]["Enums"]["app_role"]
           user_id: string
         }
         Insert: {
+<<<<<<< HEAD
+=======
+          created_at?: string
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
           id?: string
           role: Database["public"]["Enums"]["app_role"]
           user_id: string
         }
         Update: {
+<<<<<<< HEAD
+=======
+          created_at?: string
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
           id?: string
           role?: Database["public"]["Enums"]["app_role"]
           user_id?: string
@@ -235,8 +383,19 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+<<<<<<< HEAD
       admin_exists: { Args: never; Returns: boolean }
       claim_first_admin: { Args: never; Returns: boolean }
+=======
+      consume_auth_email_code_limit: {
+        Args: {
+          p_bucket_key: string
+          p_limit: number
+          p_window_seconds: number
+        }
+        Returns: boolean
+      }
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
       get_verification_badge: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
@@ -245,6 +404,7 @@ export type Database = {
         }
         Returns: boolean
       }
+<<<<<<< HEAD
       review_usdt_payment: {
         Args: { _approve: boolean; _purchase_id: string }
         Returns: undefined
@@ -256,6 +416,22 @@ export type Database = {
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"
+=======
+      lookup_member_by_nexus_id: {
+        Args: { p_member_id: string }
+        Returns: {
+          avatar_url: string
+          first_name: string
+          full_name: string
+          id: string
+          last_name: string
+          member_id: string
+        }[]
+      }
+    }
+    Enums: {
+      app_role: "admin" | "user"
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
     }
     CompositeTypes: {
       [_ in never]: never
@@ -383,7 +559,11 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+<<<<<<< HEAD
       app_role: ["admin", "moderator", "user"],
+=======
+      app_role: ["admin", "user"],
+>>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
     },
   },
 } as const
