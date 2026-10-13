@@ -229,6 +229,7 @@ export type Database = {
           created_at: string
           currency: string
           id: string
+          invoice_number: number | null
           receipt_url: string | null
           reviewed_at: string | null
           reviewed_by: string | null
@@ -245,6 +246,7 @@ export type Database = {
           created_at?: string
           currency?: string
           id?: string
+          invoice_number?: number | null
           receipt_url?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
@@ -261,6 +263,7 @@ export type Database = {
           created_at?: string
           currency?: string
           id?: string
+          invoice_number?: number | null
           receipt_url?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
