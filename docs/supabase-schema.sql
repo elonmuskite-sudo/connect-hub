@@ -247,11 +247,4 @@ begin
   return new;
 end $$;
 drop trigger if exists trg_idv_review on public.identity_verifications;
-create trigger trg_idv_review before update on public.identity_verifications for each row execute function public.stamp_idv_review();-- README.md
-# Supabase migrations
-
-- Add each schema change as a new `YYYYMMDDHHMMSS_description.sql` file in this directory.
-- Never rewrite a migration after it has been applied; the runner stores and checks each SHA-256 checksum in `public.nexus_schema_migrations`.
-- Review pending files with `npm run db:setup:dry`, then have an operator apply them using `npm run db:setup` from a trusted terminal with `SUPABASE_DB_URL` in the ignored local `.env.local`.
-- Build validation and browser code must not execute SQL. Do not upload `SUPABASE_DB_URL` to Vercel or expose it through a `VITE_` variable.
-- The CLI uses a transaction and PostgreSQL advisory lock. Review destructive statements before applying; use a new forward migration for corrections.
+create trigger trg_idv_review before update on public.identity_verifications for each row execute function public.stamp_idv_review();
