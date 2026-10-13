@@ -10,6 +10,7 @@ import IdentityReviewQueue from '../components/IdentityReviewQueue'
 import PaymentWebhookLog from '../components/PaymentWebhookLog'
 import AdminPaymentSettings from '../components/AdminPaymentSettings'
 import AdminPaymentQueue from '../components/AdminPaymentQueue'
+import AdminMemberManager from '../components/AdminMemberManager'
 
 export default function AdminDashboard() {
   const { user } = useAuth()
@@ -118,6 +119,7 @@ export default function AdminDashboard() {
             </section>
           </div>
         )}
+        <AdminMemberManager />
         <AdminPaymentSettings />
         <AdminPaymentQueue />
         <IdentityReviewQueue />
