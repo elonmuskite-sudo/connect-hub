@@ -26,7 +26,7 @@ export default function IdentityReviewQueue() {
 
   const decide = async (id, status) => {
     const { error: e } = await supabase.from('identity_verifications').update({
-      status, reviewer_note: notes[id] || null, reviewed_at: new Date().toISOString(),
+      status, reviewer_note: notes[id] || null,
     }).eq('id', id)
     if (e) return setError(e.message)
     setRows((r) => r.filter((x) => x.id !== id))
