@@ -89,7 +89,7 @@ export default function VerificationSettings() {
       if (up2.error) throw up2.error
       const { error: insError } = await supabase.from('identity_verifications').upsert({
         user_id: user.id, status: 'pending', match_score: Number(score.toFixed(3)),
-        selfie_path: selfiePath, id_document_path: idPath, reviewer_note: null,
+        selfie_path: selfiePath, id_document_path: idPath, reviewer_note: null, reviewed_by: null, reviewed_at: null,
       }, { onConflict: 'user_id' })
       if (insError) throw insError
       setRecord({ status: 'pending', match_score: score })
