@@ -2,6 +2,22 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo } 
 
 const SettingsContext = createContext()
 
+function hexToHsl(hex) {
+  const m = typeof hex === 'string' && hex.match(/^#([0-9a-f]{6})$/i)
+  if (!m) return null
+  const n = parseInt(m[1], 16)
+  const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2
+  let h = 0, s = 0
+  if (max !== min) {
+    const d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4
+    h *= 60
+  }
+  return `${Math.round(h)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`
+}
+
 function readFromStorage(key, defaultValue) {
   if (typeof window === 'undefined') return defaultValue
   try {
@@ -18,7 +34,18 @@ export function SettingsProvider({ children }) {
     notificationSound: readFromStorage('notificationSound', true),
     notificationTone: readFromStorage('notificationTone', 'chime'),
     notificationVolume: readFromStorage('notificationVolume', 0.5),
+    badgeBlue: readFromStorage('badgeBlue', null),
+    badgeGold: readFromStorage('badgeGold', null),
   }))
+
+  useEffect(() => {
+    const root = document.documentElement
+    for (const [key, cssVar] of [['badgeBlue', '--badge-blue'], ['badgeGold', '--badge-gold']]) {
+      const hsl = hexToHsl(settings[key])
+      if (hsl) root.style.setProperty(cssVar, hsl)
+      else root.style.removeProperty(cssVar)
+    }
+  }, [settings.badgeBlue, settings.badgeGold])
 
   useEffect(() => {
     const entries = Object.entries(settings)
