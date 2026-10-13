@@ -1,29 +1,18 @@
-<<<<<<< HEAD
 # Nexus Chat
-=======
-# Sync Your Code
-
-sync github
->>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
 
 This project was built with [Lovable](https://lovable.dev).
 
 ## Build with Lovable
 
-<<<<<<< HEAD
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/bb430f2d-cb67-414d-937f-108a31a0058b).
-=======
 Continue developing this project in the [Lovable editor](https://lovable.dev/projects/d29b9902-8bf3-4839-8fdd-4a1aaa43a279).
->>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
 
 - **Ship faster**: describe what you want to build and Lovable handles the code.
 - **Stay in sync**: every change made in Lovable is committed straight to this repository.
 - **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
 
-<<<<<<< HEAD
 ## Authentication setup
 
-Supabase Auth handles account credentials and password recovery. Appwrite remains the chat data provider. Follow [the Supabase Auth and Resend setup guide](docs/supabase-auth-setup.md) before deploying the auth migration.
+Supabase Auth handles account credentials and password recovery. Follow [the Supabase Auth and Resend setup guide](docs/supabase-auth-setup.md) before deploying the auth migration.
 
 ## Vercel environment variables
 
@@ -47,7 +36,7 @@ The Vercel sync command uploads application environment values to the Production
 	try {
 	    npm run vercel:env:dry
 	    if ($LASTEXITCODE -ne 0) { throw "Vercel environment dry run failed; do not sync yet." }
-	    $confirmation = Read-Host 'Review the dry-run output. Type SYNC to update Vercel Production variables'
+ 	    $confirmation = Read-Host 'Review the dry-run output. Type SYNC to update Vercel Production variables'
 	    if ($confirmation -ceq 'SYNC') {
 	        npm run vercel:env:sync
 	        if ($LASTEXITCODE -ne 0) { throw "Vercel environment sync failed." }
@@ -57,14 +46,12 @@ The Vercel sync command uploads application environment values to the Production
 	} finally {
 	    Remove-Item Env:VERCEL_TOKEN -ErrorAction SilentlyContinue
 	    Remove-Item Env:VERCEL_PROJECT_ID -ErrorAction SilentlyContinue
-	    Remove-Item Env:VERCEL_TEAM_ID -ErrorAction SilentlyContinue
+ 	    Remove-Item Env:VERCEL_TEAM_ID -ErrorAction SilentlyContinue
 	}
 	```
 
 The dry run reports missing variable names only. The sync command updates existing Production-only variables, creates missing ones, then removes the legacy public secret variables. It fails rather than changing variables currently shared with Preview or Development, so adjust those target scopes in Vercel first if prompted.
 
-=======
->>>>>>> 39c3019adaf9289486d7b06780a3e0f5c054d086
 ## Development
 
 Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
