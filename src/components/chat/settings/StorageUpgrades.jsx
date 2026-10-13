@@ -89,6 +89,7 @@ export default function StorageUpgrades() {
                 <span className="flex-1 text-foreground">{formatBytes(p.added_bytes)} · {(p.amount_cents / 100).toFixed(2)} {p.currency.toUpperCase()} · {new Date(p.created_at).toLocaleDateString()}</span>
                 <span className="text-muted-foreground">{STATUS_LABEL[p.status] || p.status}</span>
                 {p.status === 'awaiting_approval' && <button onClick={() => navigate(`/app/payment/${p.id}`)} className="text-primary hover:underline">View</button>}
+                <button onClick={() => navigate(`/app/invoice/${p.id}`)} className="text-primary hover:underline">Invoice</button>
               </li>
             ))}
           </ul>

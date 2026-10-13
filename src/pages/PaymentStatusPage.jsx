@@ -36,6 +36,7 @@ export default function PaymentStatusPage() {
           <>
             <CheckCircle2 className="mx-auto h-14 w-14 text-primary" />
             <h1 className="mt-4 text-2xl font-bold text-foreground">Payment completed</h1>
+            <button onClick={() => navigate(`/app/invoice/${purchase.id}`)} className="mt-3 text-sm text-primary hover:underline">View invoice</button>
             <p className="mt-2 text-sm text-muted-foreground">{formatBytes(purchase.added_bytes)} has been added to your storage. Taking you to your chats…</p>
           </>
         ) : status === 'rejected' ? (
