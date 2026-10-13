@@ -1,10 +1,12 @@
 import { useSetting } from '../../../hooks/useSetting'
 import { WALLPAPERS } from '../../../lib/wallpapers'
 import SettingsRow from './SettingsRow'
-import { Check, Image } from 'lucide-react'
+import { BadgeCheck, Check, Image } from 'lucide-react'
 
 export default function AppearanceSettings() {
   const [chatWallpaper, setChatWallpaper] = useSetting('chatWallpaper', 'nature')
+  const [badgeBlue, setBadgeBlue] = useSetting('badgeBlue', null)
+  const [badgeGold, setBadgeGold] = useSetting('badgeGold', null)
 
   return (
     <div className="space-y-6">
@@ -63,6 +65,19 @@ export default function AppearanceSettings() {
           {WALLPAPERS.find(w => w.id === chatWallpaper)?.name || 'Default'}
         </span>
       </SettingsRow>
+
+      <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+        <p className="font-semibold text-foreground">Verification badge colors</p>
+        <p className="text-sm text-muted-foreground">Blue = email verified. Gold = ID authenticated.</p>
+        {[['Verified (blue)', badgeBlue, setBadgeBlue, '#0A9CFF', 'fill-badge-blue'], ['Authenticated (gold)', badgeGold, setBadgeGold, '#F5B819', 'fill-badge-gold']].map(([label, val, set, def, fill]) => (
+          <div key={label} className="flex items-center gap-3">
+            <BadgeCheck className={`w-6 h-6 ${fill} text-background`} />
+            <span className="flex-1 text-sm text-foreground">{label}</span>
+            <input type="color" value={val || def} onChange={(e) => set(e.target.value)} aria-label={`${label} color`} className="h-8 w-10 cursor-pointer rounded border border-border bg-background" />
+            {val && <button onClick={() => set(null)} className="text-xs text-primary hover:underline">Reset</button>}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
