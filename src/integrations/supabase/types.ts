@@ -122,6 +122,30 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_settings: {
+        Row: {
+          id: number
+          network: string
+          qr_image_url: string | null
+          updated_at: string
+          wallet_address: string
+        }
+        Insert: {
+          id?: number
+          network?: string
+          qr_image_url?: string | null
+          updated_at?: string
+          wallet_address: string
+        }
+        Update: {
+          id?: number
+          network?: string
+          qr_image_url?: string | null
+          updated_at?: string
+          wallet_address?: string
+        }
+        Relationships: []
+      }
       payment_webhook_events: {
         Row: {
           error: string | null
@@ -206,8 +230,11 @@ export type Database = {
           currency: string
           id: string
           receipt_url: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
           status: string
           tier: string
+          tx_reference: string | null
           updated_at: string
           user_id: string
         }
@@ -219,8 +246,11 @@ export type Database = {
           currency?: string
           id?: string
           receipt_url?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
           status?: string
           tier: string
+          tx_reference?: string | null
           updated_at?: string
           user_id: string
         }
@@ -232,8 +262,11 @@ export type Database = {
           currency?: string
           id?: string
           receipt_url?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
           status?: string
           tier?: string
+          tx_reference?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -286,6 +319,8 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_exists: { Args: never; Returns: boolean }
+      claim_first_admin: { Args: never; Returns: undefined }
       consume_auth_email_code_limit: {
         Args: {
           p_bucket_key: string
@@ -312,6 +347,14 @@ export type Database = {
           last_name: string
           member_id: string
         }[]
+      }
+      review_usdt_payment: {
+        Args: { _approve: boolean; _purchase_id: string }
+        Returns: undefined
+      }
+      submit_usdt_payment: {
+        Args: { _tier: string; _tx_reference: string }
+        Returns: string
       }
     }
     Enums: {
