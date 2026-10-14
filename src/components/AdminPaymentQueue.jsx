@@ -1,26 +1,54 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { formatBytes } from '../lib/storageManager'
+import { appwriteData, isAppwriteAuthEnabled } from '../lib/appwrite'
 
 export default function AdminPaymentQueue() {
   const [rows, setRows] = useState([])
   const [error, setError] = useState('')
 
+  const load = useCallback(async () => {
+    try {
+      if (isAppwriteAuthEnabled()) {
+        const { purchases } = await appwriteData('payments.admin.queue')
+        setRows(purchases || [])
+      } else {
+        const { data, error: queryError } = await supabase.from('storage_purchases').select('*').eq('status', 'awaiting_approval')
+          .order('created_at').limit(100)
+        if (queryError) throw queryError
+        setRows(data || [])
+      }
+      setError('')
+    } catch (error) {
+      setError(error.message || 'Could not load pending payments.')
+    }
+  }, [])
+
   useEffect(() => {
-    if (!supabase) return undefined
-    const load = () => supabase.from('storage_purchases').select('*').eq('status', 'awaiting_approval')
-      .order('created_at').limit(100).then(({ data, error: e }) => (e ? setError(e.message) : setRows(data || [])))
+    if (!isAppwriteAuthEnabled() && !supabase) return undefined
     load()
+    if (isAppwriteAuthEnabled()) {
+      const timer = setInterval(load, 10000)
+      return () => clearInterval(timer)
+    }
     const channel = supabase.channel('admin-usdt-queue')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'storage_purchases' }, load).subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [])
+  }, [load])
 
   const decide = async (id, approve) => {
     setError('')
-    const { error: e } = await supabase.rpc('review_usdt_payment', { _purchase_id: id, _approve: approve })
-    if (e) return setError(e.message)
-    setRows((r) => r.filter((x) => x.id !== id))
+    try {
+      if (isAppwriteAuthEnabled()) {
+        await appwriteData('payments.review', { purchaseId: id, approve })
+      } else {
+        const { error: e } = await supabase.rpc('review_usdt_payment', { _purchase_id: id, _approve: approve })
+        if (e) throw e
+      }
+      setRows((r) => r.filter((x) => x.id !== id))
+    } catch (e) {
+      setError(e.message || 'The payment could not be reviewed.')
+    }
   }
 
   return (

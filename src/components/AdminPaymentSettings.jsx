@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { getPaymentSettings } from '../lib/usdtPayments'
+import { appwriteData, isAppwriteAuthEnabled } from '../lib/appwrite'
 
 export default function AdminPaymentSettings() {
   const [wallet, setWallet] = useState('')
@@ -11,7 +12,7 @@ export default function AdminPaymentSettings() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    if (!supabase) return
+    if (!supabase && !isAppwriteAuthEnabled()) return
     getPaymentSettings().then((s) => {
       if (!s) return
       setWallet(s.wallet_address || ''); setQrPath(s.qr_image_url); setQrUrl(s.qrUrl)
@@ -25,16 +26,35 @@ export default function AdminPaymentSettings() {
     try {
       let path = qrPath
       if (file) {
-        path = `qr-${Date.now()}.${(file.name.split('.').pop() || 'png').toLowerCase()}`
-        const { error } = await supabase.storage.from('payment-qr').upload(path, file, { contentType: file.type })
+        if (isAppwriteAuthEnabled()) {
+          const upload = await appwriteData('payments.qr.upload.prepare', {
+            fileName: file.name,
+            mimeType: file.type,
+            sizeBytes: file.size,
+          })
+          const { error } = await supabase.storage.from('payment-qr')
+            .uploadToSignedUrl(upload.path, upload.token, file, { contentType: file.type })
+          if (error) throw error
+          path = upload.path
+        } else {
+          path = `qr-${Date.now()}.${(file.name.split('.').pop() || 'png').toLowerCase()}`
+          const { error } = await supabase.storage.from('payment-qr').upload(path, file, { contentType: file.type })
+          if (error) throw error
+        }
+      }
+      if (isAppwriteAuthEnabled()) {
+        await appwriteData('payments.settings.save', { walletAddress: wallet.trim(), qrPath: path })
+      } else {
+        const { error } = await supabase.from('payment_settings').upsert({ id: 1, wallet_address: wallet.trim(), qr_image_url: path, network: 'BEP20' })
         if (error) throw error
       }
-      const { error } = await supabase.from('payment_settings').upsert({ id: 1, wallet_address: wallet.trim(), qr_image_url: path, network: 'BEP20' })
-      if (error) throw error
       setQrPath(path); setFile(null)
-      if (path) {
+      if (path && !isAppwriteAuthEnabled()) {
         const { data } = await supabase.storage.from('payment-qr').createSignedUrl(path, 3600)
         setQrUrl(data?.signedUrl || null)
+      } else if (isAppwriteAuthEnabled()) {
+        const settings = await getPaymentSettings()
+        setQrUrl(settings?.qrUrl || null)
       }
       setMsg('Saved.')
     } catch (e) {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
+import { appwriteData, isAppwriteAuthEnabled } from '../lib/appwrite'
 
 export default function AdminMemberManager() {
   const { user } = useAuth()
@@ -12,6 +13,17 @@ export default function AdminMemberManager() {
   const [msg, setMsg] = useState('')
 
   const load = useCallback(async () => {
+    if (isAppwriteAuthEnabled()) {
+      try {
+        const { members: rows, admins: roles } = await appwriteData('admin.members.list', { query })
+        setMembers(rows || [])
+        setAdmins(new Set((roles || []).map((role) => role.user_id)))
+        setMsg('')
+      } catch (error) {
+        setMsg(error.message || 'Could not load members.')
+      }
+      return
+    }
     let q = supabase.from('members').select('id, member_id, first_name, last_name, full_name, email, email_verified, bio, created_at').order('created_at', { ascending: false }).limit(100)
     const term = query.trim()
     if (term) q = q.or(`full_name.ilike.%${term.replace(/[%,()]/g, '')}%,email.ilike.%${term.replace(/[%,()]/g, '')}%,member_id.ilike.%${term.replace(/[%,()]/g, '')}%`)
@@ -25,11 +37,36 @@ export default function AdminMemberManager() {
 
   const run = async (fn, ok) => {
     setBusy(true); setMsg('')
-    const { error } = await fn()
-    setBusy(false)
-    setMsg(error ? error.message : ok)
-    if (!error) { setEditing(null); load() }
+    try {
+      await fn()
+      setMsg(ok)
+      setEditing(null)
+      await load()
+    } catch (error) {
+      setMsg(error.message || 'The member action failed.')
+    } finally {
+      setBusy(false)
+    }
   }
+
+  const updateMember = (member) => isAppwriteAuthEnabled()
+    ? appwriteData('admin.member.update', {
+      memberId: member.id,
+      firstName: editing.first_name,
+      lastName: editing.last_name,
+      bio: editing.bio,
+    })
+    : supabase.rpc('admin_update_member', {
+      _member_id: member.id,
+      _first_name: editing.first_name,
+      _last_name: editing.last_name,
+      _bio: editing.bio,
+    }).then(({ error }) => { if (error) throw error })
+
+  const setAdminRole = (memberId, grant) => isAppwriteAuthEnabled()
+    ? appwriteData('admin.role.set', { memberId, grant })
+    : supabase.rpc('admin_set_admin_role', { _user_id: memberId, _grant: grant })
+      .then(({ error }) => { if (error) throw error })
 
   return (
     <section className="mt-8 rounded-[24px] border border-border bg-card p-6 text-card-foreground shadow-sm">
@@ -56,7 +93,7 @@ export default function AdminMemberManager() {
                 <textarea className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm" rows={2} maxLength={500} value={editing.bio} onChange={(e) => setEditing({ ...editing, bio: e.target.value })} placeholder="Bio" />
                 <div className="flex gap-2">
                   <button disabled={busy} className="rounded-xl bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-                    onClick={() => run(() => supabase.rpc('admin_update_member', { _member_id: m.id, _first_name: editing.first_name, _last_name: editing.last_name, _bio: editing.bio }), 'Member updated.')}>Save</button>
+                    onClick={() => run(() => updateMember(m), 'Member updated.')}>Save</button>
                   <button className="rounded-xl border border-border px-3 py-2 text-sm" onClick={() => setEditing(null)}>Cancel</button>
                 </div>
               </div>
@@ -72,7 +109,7 @@ export default function AdminMemberManager() {
                 <button className="rounded-xl border border-border px-3 py-1.5 text-sm" onClick={() => setEditing({ id: m.id, first_name: m.first_name || '', last_name: m.last_name || '', bio: m.bio || '' })}>Edit</button>
                 {!isSelf && (
                   <button disabled={busy} className="rounded-xl border border-border px-3 py-1.5 text-sm disabled:opacity-50"
-                    onClick={() => { if (window.confirm(isAdmin ? 'Remove admin access?' : 'Give this member admin access?')) run(() => supabase.rpc('admin_set_admin_role', { _user_id: m.id, _grant: !isAdmin }), isAdmin ? 'Admin access removed.' : 'Admin access granted.') }}>
+                    onClick={() => { if (window.confirm(isAdmin ? 'Remove admin access?' : 'Give this member admin access?')) run(() => setAdminRole(m.id, !isAdmin), isAdmin ? 'Admin access removed.' : 'Admin access granted.') }}>
                     {isAdmin ? 'Remove admin' : 'Make admin'}
                   </button>
                 )}

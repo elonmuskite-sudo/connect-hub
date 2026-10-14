@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/AuthContext'
 import { supabase } from '../lib/supabase'
+import { appwriteData, isAppwriteAuthEnabled } from '../lib/appwrite'
 import Header from '../components/Header'
 import BottomNav from '../components/chat/BottomNav'
 import AppTopNav from '../components/chat/AppTopNav'
@@ -21,13 +22,19 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     const loadAdminData = async () => {
-      if (!supabase) {
+      if (!isAppwriteAuthEnabled() && !supabase) {
         setError('The database is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.')
         setLoading(false)
         return
       }
 
       try {
+        if (isAppwriteAuthEnabled()) {
+          const { members, messages } = await appwriteData('admin.dashboard')
+          setActiveUsers(members || [])
+          setRecentMessages(messages || [])
+          return
+        }
         const [users, messages] = await Promise.all([
           supabase.from('members').select('id, member_id, full_name, created_at').order('created_at', { ascending: false }).limit(20),
           supabase.from('messages').select('id, chat_id, type, content, created_at').order('created_at', { ascending: false }).limit(20),
