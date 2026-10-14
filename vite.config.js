@@ -26,12 +26,25 @@ function resolveSupabaseClientEnv(mode) {
   };
 }
 
+function resolveAppwriteClientEnv(mode) {
+  const env = loadEnv(mode, process.cwd(), "");
+  return {
+    endpoint: env.VITE_APPWRITE_ENDPOINT || process.env.VITE_APPWRITE_ENDPOINT || "",
+    projectId: env.VITE_APPWRITE_PROJECT_ID || process.env.VITE_APPWRITE_PROJECT_ID || "",
+    authProvider: env.VITE_AUTH_PROVIDER || process.env.VITE_AUTH_PROVIDER || "supabase",
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const supabaseClientEnv = resolveSupabaseClientEnv(mode);
+  const appwriteClientEnv = resolveAppwriteClientEnv(mode);
   return {
   define: {
     "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(supabaseClientEnv.url),
     "import.meta.env.VITE_SUPABASE_ANON_KEY": JSON.stringify(supabaseClientEnv.anonKey),
+    "import.meta.env.VITE_APPWRITE_ENDPOINT": JSON.stringify(appwriteClientEnv.endpoint),
+    "import.meta.env.VITE_APPWRITE_PROJECT_ID": JSON.stringify(appwriteClientEnv.projectId),
+    "import.meta.env.VITE_AUTH_PROVIDER": JSON.stringify(appwriteClientEnv.authProvider),
   },
   plugins: [
     react(),

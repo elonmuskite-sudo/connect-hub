@@ -73,6 +73,26 @@ async function sha256Hex(input: string) {
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+async function isPasswordPwned(password: string) {
+  const digest = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(password))
+  const hash = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase()
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10000)
+  let response: Response
+  try {
+    response = await fetch(`https://api.pwnedpasswords.com/range/${hash.slice(0, 5)}`, {
+      headers: { 'Add-Padding': 'true' },
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
+  if (!response.ok) throw new Error(`Pwned Passwords API returned HTTP ${response.status}.`)
+  const suffix = hash.slice(5)
+  const ranges = await response.text()
+  return ranges.split(/\r?\n/).some((line) => line.split(':')[0]?.toUpperCase() === suffix)
+}
+
 function generateVerificationCode(previousCode?: string) {
   const candidate = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, '0')
   if (!previousCode || candidate !== previousCode) return candidate
@@ -256,6 +276,15 @@ Deno.serve(async (req) => {
     const memberId = String(body.memberId || '')
     if (password.length < 8 || firstName.length > 128 || lastName.length > 128 || !/^10\d{8}$/.test(memberId)) {
       return json(400, { error: 'Provide a valid name, an 8-character password, and a valid member ID.' })
+    }
+    let passwordPwned: boolean
+    try {
+      passwordPwned = await isPasswordPwned(password)
+    } catch {
+      return json(503, { error: 'Could not check this password against known data breaches. Please try again.' })
+    }
+    if (passwordPwned) {
+      return json(400, { error: 'This password has appeared in known data breaches. Choose a different password.' })
     }
     const { data, error } = await admin.auth.admin.createUser({
       email,

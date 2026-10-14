@@ -1,20 +1,23 @@
 import { createClient } from '@supabase/supabase-js'
+import { isPasswordPwned } from './pwnedPasswords'
+import { appwriteAccount, appwriteData, createAppwriteRecovery, isAppwriteAuthEnabled, signOutFromAppwrite } from './appwrite'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || ''
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || ''
+const appwriteSelected = import.meta.env.VITE_AUTH_PROVIDER === 'appwrite'
 
 export const supabase = supabaseUrl && supabaseAnonKey
   ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
+        persistSession: !appwriteSelected,
+        autoRefreshToken: !appwriteSelected,
+        detectSessionInUrl: !appwriteSelected,
       },
     })
   : null
 
 export function isSupabaseConfigured() {
-  return Boolean(supabase && supabaseUrl && supabaseAnonKey)
+  return isAppwriteAuthEnabled() || Boolean(supabase && supabaseUrl && supabaseAnonKey)
 }
 
 const EMAIL_CODE_STATE_KEY = 'nexus_auth_email_code_state'
@@ -101,6 +104,15 @@ export async function resendEmailCode(email, purpose) {
 }
 
 export async function signInWithEmail(email, password) {
+  if (isAppwriteAuthEnabled()) {
+    await appwriteAccount.createEmailPasswordSession(String(email || '').trim().toLowerCase(), password)
+    const account = await appwriteAccount.get()
+    if (!account.emailVerification) throw new Error('Verify your email before signing in.')
+    const { profile } = await appwriteData('profile.get')
+    return {
+      user: { ...profile, email: account.email, email_confirmed_at: account.emailVerification ? new Date().toISOString() : null },
+    }
+  }
   if (!supabase) throw new Error('Supabase Auth is not configured.')
   const { data, error } = await supabase.auth.signInWithPassword({
     email: String(email || '').trim().toLowerCase(),
@@ -111,12 +123,25 @@ export async function signInWithEmail(email, password) {
 }
 
 export async function signOutFromSupabase() {
+  if (isAppwriteAuthEnabled()) {
+    await signOutFromAppwrite()
+    return
+  }
   if (!supabase) return
   const { error } = await supabase.auth.signOut()
   if (error) throw error
 }
 
 export async function startPasswordRecoveryCode(email) {
+  if (isAppwriteAuthEnabled()) {
+    const result = await createAppwriteRecovery(String(email || '').trim().toLowerCase())
+    try {
+      sessionStorage.setItem('nexus-appwrite-recovery-user-id', result.userId)
+    } catch {
+      throw new Error('Recovery could not be prepared in this browser. Enable session storage and try again.')
+    }
+    return result
+  }
   return requestEmailCode({
     action: 'recovery',
     purpose: 'recovery',
@@ -125,6 +150,15 @@ export async function startPasswordRecoveryCode(email) {
 }
 
 export async function updateAuthenticatedPassword(password) {
+  if (await isPasswordPwned(password)) {
+    throw new Error('This password has appeared in known data breaches. Choose a different password.')
+  }
+  if (isAppwriteAuthEnabled()) {
+    if (!appwriteAccount) throw new Error('Appwrite Auth is not configured.')
+    const { code } = await appwriteAccount.updatePassword(password)
+    if (code) throw new Error('Password update was not confirmed.')
+    return { user: await appwriteAccount.get() }
+  }
   if (!supabase) throw new Error('Supabase Auth is not configured.')
   const { data, error } = await supabase.auth.updateUser({ password })
   if (error) throw error
@@ -132,6 +166,10 @@ export async function updateAuthenticatedPassword(password) {
 }
 
 export async function getMemberProfile(userId) {
+  if (isAppwriteAuthEnabled()) {
+    const { profile } = await appwriteData('profile.get')
+    return profile
+  }
   if (!supabase) throw new Error('Supabase Auth is not configured.')
   const { data, error } = await supabase
     .from('members')
@@ -144,6 +182,21 @@ export async function getMemberProfile(userId) {
 }
 
 export async function findMemberByNexusId(nexusId) {
+  if (isAppwriteAuthEnabled()) {
+    const normalizedId = String(nexusId || '').replace(/\D/g, '')
+    if (!/^10\d{8}$/.test(normalizedId)) return null
+    const { member } = await appwriteData('directory.lookup', { memberId: normalizedId })
+    if (!member) return null
+    return {
+      id: member.id,
+      nexusId: member.member_id,
+      nexusIdDisplay: formatMemberId(member.member_id),
+      firstName: member.first_name,
+      lastName: member.last_name,
+      fullName: member.full_name,
+      avatarUrl: member.avatar_url || null,
+    }
+  }
   if (!supabase) throw new Error('Supabase Auth is not configured.')
   const normalizedId = String(nexusId || '').replace(/\D/g, '')
   if (!/^10\d{8}$/.test(normalizedId)) return null
@@ -176,6 +229,10 @@ function formatMemberId(value) {
 }
 
 export async function updateMemberProfile(userId, updates) {
+  if (isAppwriteAuthEnabled()) {
+    const { profile } = await appwriteData('profile.update', { updates })
+    return profile
+  }
   if (!supabase) throw new Error('Supabase Auth is not configured.')
   const profileUpdates = {}
   if (updates.firstName !== undefined) profileUpdates.first_name = updates.firstName

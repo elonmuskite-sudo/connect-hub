@@ -1,0 +1,696 @@
+import { randomUUID } from 'node:crypto'
+import { createClient } from '@supabase/supabase-js'
+import { IdentityLinkError, linkAppwriteIdentity, verifyAppwriteSession } from './appwriteIdentity.js'
+import { createDatabasePool, withAuthenticatedDatabaseTransaction } from './appwriteDatabase.js'
+
+let poolPromise
+const FIRST_VALID_UUID = '00000000-0000-1000-8000-000000000000'
+
+export class GatewayError extends Error {
+  constructor(message, status = 400) {
+    super(message)
+    this.name = 'GatewayError'
+    this.status = status
+  }
+}
+
+function getConfiguration() {
+  const endpoint = String(process.env.APPWRITE_ENDPOINT || '').trim()
+  const projectId = String(process.env.APPWRITE_PROJECT_ID || '').trim()
+  const supabaseUrl = String(process.env.SUPABASE_URL || '').trim()
+  const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()
+  const poolerUrl = String(process.env.SUPABASE_POOLER_URL || '').trim()
+  if (!endpoint || !projectId || !supabaseUrl || !serviceRoleKey || !poolerUrl) return null
+
+  let parsedEndpoint
+  let parsedPooler
+  try {
+    parsedEndpoint = new URL(endpoint)
+    parsedPooler = new URL(poolerUrl)
+  } catch {
+    return null
+  }
+  const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(parsedEndpoint.hostname)
+  const localHttpAllowed = process.env.NODE_ENV !== 'production' && isLocal && parsedEndpoint.protocol === 'http:'
+  if (parsedEndpoint.protocol !== 'https:' && !localHttpAllowed) return null
+  if (!['postgres:', 'postgresql:'].includes(parsedPooler.protocol)
+    || !['require', 'verify-ca', 'verify-full'].includes(parsedPooler.searchParams.get('sslmode'))) return null
+
+  return { endpoint: parsedEndpoint, projectId, supabaseUrl, serviceRoleKey, poolerUrl }
+}
+
+export async function executeUserDataOperation(client, identity, body, admin) {
+  const { supabaseUserId } = identity
+  const action = String(body?.action || '')
+  switch (action) {
+    case 'profile.get': {
+      const { rows } = await client.query(
+        `select id, member_id, first_name, last_name, full_name, email, email_verified,
+                avatar_url, bio, interests, created_at,
+                public.has_role(id, 'admin'::public.app_role) as is_admin
+           from public.members
+          where id = $1`,
+        [supabaseUserId],
+      )
+      if (!rows[0]) throw new GatewayError('The linked profile is unavailable.', 404)
+      const { is_admin: isAdmin, ...profile } = rows[0]
+      return { profile: { ...profile, role: isAdmin ? 'admin' : 'user' } }
+    }
+    case 'profile.update': {
+      const allowed = {
+        firstName: ['first_name', 100],
+        lastName: ['last_name', 100],
+        fullName: ['full_name', 201],
+        avatarUrl: ['avatar_url', 2048],
+        bio: ['bio', 1500],
+        interests: ['interests', null],
+      }
+      const updates = Object.entries(allowed).filter(([key]) => body.updates?.[key] !== undefined)
+      if (!updates.length) throw new GatewayError('No profile fields were provided.')
+      const values = []
+      const assignments = updates.map(([key, [column, max]]) => {
+        const value = body.updates[key]
+        if (key === 'interests') {
+          if (!Array.isArray(value) || value.length > 20 || value.some((item) => typeof item !== 'string' || item.length > 80)) {
+            throw new GatewayError('Interests are invalid.')
+          }
+          values.push(value)
+        } else {
+          values.push(optionalString(value, column, max))
+        }
+        return `${column} = $${values.length}`
+      })
+      values.push(supabaseUserId)
+      const { rows } = await client.query(
+        `update public.members set ${assignments.join(', ')} where id = $${values.length}
+         returning id, member_id, first_name, last_name, full_name, email, email_verified,
+                   avatar_url, bio, interests, created_at`,
+        values,
+      )
+      if (!rows[0]) throw new GatewayError('The profile could not be updated.', 404)
+      const { rows: roles } = await client.query(
+        `select public.has_role($1, 'admin'::public.app_role) as is_admin`,
+        [supabaseUserId],
+      )
+      return { profile: { ...rows[0], role: roles[0]?.is_admin ? 'admin' : 'user' } }
+    }
+    case 'directory.lookup': {
+      const memberId = String(body.memberId || '').replace(/\D/g, '')
+      if (!/^10\d{8}$/.test(memberId)) throw new GatewayError('Recipient ID is invalid.')
+      const { rows } = await client.query(
+        `select id, member_id, first_name, last_name, full_name, avatar_url
+           from public.lookup_member_by_nexus_id($1)`,
+        [memberId],
+      )
+      return { member: rows[0] || null }
+    }
+    case 'chats.list': {
+      const { rows } = await client.query(
+        `select c.id, c.title, c.type, c.avatar_url, c.encrypted, c.owner_id, c.created_at,
+                coalesce(json_agg(json_build_object('profile_id', cm.profile_id))
+                  filter (where cm.profile_id is not null), '[]'::json) as chat_members
+           from public.chats c
+           left join public.chat_members cm on cm.chat_id = c.id
+          group by c.id
+          order by c.created_at desc
+          limit 500`,
+      )
+      return { chats: rows }
+    }
+    case 'chats.get': {
+      const chatId = requiredString(body.chatId, 'Chat ID', 64)
+      if (!validUuid(chatId)) throw new GatewayError('Chat ID is invalid.')
+      const { rows: chats } = await client.query(
+        `select c.id, c.title, c.type, c.avatar_url, c.encrypted, c.owner_id, c.created_at,
+                coalesce(json_agg(json_build_object('profile_id', cm.profile_id))
+                  filter (where cm.profile_id is not null), '[]'::json) as chat_members
+           from public.chats c
+           left join public.chat_members cm on cm.chat_id = c.id
+          where c.id = $1
+          group by c.id`,
+        [chatId],
+      )
+      if (!chats[0]) return { chat: null }
+      const { rows: messages } = await client.query(
+        `select id, chat_id, sender_id, content, type, file_url, file_name,
+                duration, encrypted, created_at
+           from public.messages
+          where chat_id = $1
+          order by created_at asc
+          limit 5000`,
+        [chatId],
+      )
+      return { chat: { ...chats[0], messages } }
+    }
+    case 'chats.create': {
+      const title = optionalString(body.title ?? 'New Chat', 'Chat title', 200)
+      const type = optionalString(body.type ?? 'private', 'Chat type', 40)
+      const avatarUrl = optionalString(body.avatarUrl, 'Chat avatar URL', 2048)
+      const encrypted = body.encrypted === true
+      const chatId = validUuid(body.chatId) ? body.chatId : undefined
+      const suppliedParticipants = Array.isArray(body.participantIds) ? body.participantIds : []
+      if (suppliedParticipants.length > 200 || suppliedParticipants.some((id) => !validUuid(id))) {
+        throw new GatewayError('Chat participants are invalid.')
+      }
+      const { rows } = await client.query(
+        `insert into public.chats (id, title, type, avatar_url, encrypted, owner_id)
+         values (coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6)
+         returning id, title, type, avatar_url, encrypted, owner_id, created_at`,
+        [chatId || null, title, type, avatarUrl, encrypted, supabaseUserId],
+      )
+      const participants = [...new Set([supabaseUserId, ...suppliedParticipants])]
+      for (const participantId of participants) {
+        await client.query(
+          `insert into public.chat_members (chat_id, profile_id) values ($1, $2)`,
+          [rows[0].id, participantId],
+        )
+      }
+      return { chat: { ...rows[0], participant_ids: participants } }
+    }
+    case 'messages.send': {
+      const chatId = requiredString(body.chatId, 'Chat ID', 64)
+      if (!validUuid(chatId)) throw new GatewayError('Chat ID is invalid.')
+      const content = requiredString(body.content, 'Message content', 65535)
+      if (!content.trim()) throw new GatewayError('Message content is required.')
+      const messageId = validUuid(body.id) ? body.id : undefined
+      const duration = body.duration == null ? null : Number(body.duration)
+      if (duration !== null && (!Number.isFinite(duration) || duration < 0)) throw new GatewayError('Message duration is invalid.')
+      const { rows } = await client.query(
+        `insert into public.messages
+           (id, chat_id, sender_id, content, type, file_url, file_name, duration, encrypted, created_at)
+         values
+           (coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9, coalesce($10::timestamptz, now()))
+         returning id, chat_id, sender_id, content, type, file_url, file_name, duration, encrypted, created_at`,
+        [
+          messageId || null,
+          chatId,
+          supabaseUserId,
+          content,
+          optionalString(body.type || 'text', 'Message type', 40),
+          optionalString(body.fileUrl, 'File URL', 4096),
+          optionalString(body.fileName, 'File name', 255),
+          duration,
+          body.encrypted === true,
+          body.createdAt || null,
+        ],
+      )
+      return { message: rows[0] }
+    }
+    case 'events.poll': {
+      const since = body.since == null ? new Date().toISOString() : String(body.since)
+      if (!Number.isFinite(Date.parse(since))) throw new GatewayError('The event cursor is invalid.')
+      const afterId = body.afterId == null ? FIRST_VALID_UUID : String(body.afterId)
+      if (!validUuid(afterId)) throw new GatewayError('The event cursor is invalid.')
+      const { rows } = await client.query(
+        `select m.id, m.chat_id, m.sender_id, m.content, m.type, m.file_url, m.file_name,
+                m.duration, m.encrypted, m.created_at
+           from public.messages m
+          where (m.created_at, m.id) > ($1::timestamptz, $2::uuid)
+          order by m.created_at asc, m.id asc
+          limit 500`,
+        [since, afterId],
+      )
+      const lastMessage = rows.at(-1)
+      return {
+        messages: rows,
+        cursor: lastMessage
+          ? { since: lastMessage.created_at, afterId: lastMessage.id }
+          : { since, afterId },
+      }
+    }
+    case 'contacts.list': {
+      const { rows } = await client.query(
+        `select id, name, nexus_id, avatar_url, created_at
+           from public.contacts
+          order by created_at desc
+          limit 500`,
+      )
+      return { contacts: rows }
+    }
+    case 'contacts.save': {
+      const name = requiredString(body.name, 'Contact name', 200)
+      const nexusId = String(body.nexusId || '').replace(/\D/g, '')
+      if (!/^10\d{8}$/.test(nexusId)) throw new GatewayError('Contact Nexus ID is invalid.')
+      const avatarUrl = optionalString(body.avatarUrl, 'Contact avatar URL', 2048)
+      const { rows } = await client.query(
+        `insert into public.contacts (user_id, name, nexus_id, avatar_url)
+         values ($1, $2, $3, $4)
+         on conflict (user_id, nexus_id) do update
+           set name = excluded.name, avatar_url = excluded.avatar_url
+         returning id, name, nexus_id, avatar_url, created_at`,
+        [supabaseUserId, name, nexusId, avatarUrl],
+      )
+      return { contact: rows[0] }
+    }
+    case 'contacts.delete': {
+      const contactId = requiredString(body.contactId, 'Contact ID', 64)
+      if (!validUuid(contactId)) throw new GatewayError('Contact ID is invalid.')
+      const { rowCount } = await client.query(
+        `delete from public.contacts where user_id = $1 and id = $2`,
+        [supabaseUserId, contactId],
+      )
+      return { deleted: rowCount === 1 }
+    }
+    case 'storage.usage': {
+      const { rows: files } = await client.query(
+        `select id, chat_id, file_name, file_type, mime_type, size_bytes, duration_seconds,
+                storage_path, created_at
+           from public.storage_files
+          order by created_at desc
+          limit 1000`,
+      )
+      const { rows: quota } = await client.query(
+        `select quota_bytes from public.user_storage_quotas where user_id = $1`,
+        [supabaseUserId],
+      )
+      const { rows: usage } = await client.query(
+        `select coalesce(sum(size_bytes), 0)::bigint as used_bytes
+           from public.storage_files`,
+      )
+      return {
+        files,
+        quotaBytes: Number(quota[0]?.quota_bytes) || 5368709120,
+        usedBytes: Number(usage[0]?.used_bytes || 0),
+      }
+    }
+    case 'storage.upload.prepare': {
+      const fileName = requiredString(body.fileName, 'File name', 255)
+      const mimeType = requiredString(body.mimeType, 'File type', 255).toLowerCase()
+      const sizeBytes = Number(body.sizeBytes)
+      const durationSeconds = body.durationSeconds == null ? null : Number(body.durationSeconds)
+      const fileType = requiredString(body.fileType, 'File category', 40)
+      if (!['image', 'video', 'audio', 'voice', 'sticker', 'file'].includes(fileType)) {
+        throw new GatewayError('The file category is invalid.')
+      }
+      const allowedMime = /^(image\/|video\/|audio\/)/.test(mimeType)
+        || ['application/pdf', 'application/zip', 'application/x-zip-compressed', 'text/plain',
+          'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(mimeType)
+      if (!allowedMime || !Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > 50 * 1024 * 1024) {
+        throw new GatewayError('The selected file type or size is not supported.')
+      }
+      if (durationSeconds != null && (!Number.isFinite(durationSeconds) || durationSeconds < 0
+        || (fileType === 'video' && durationSeconds > 45))) {
+        throw new GatewayError('The media duration is invalid.')
+      }
+      const chatId = body.chatId == null ? null : String(body.chatId)
+      if (chatId != null) {
+        if (!validUuid(chatId)) throw new GatewayError('Chat ID is invalid.')
+        const { rows: chats } = await client.query('select id from public.chats where id = $1', [chatId])
+        if (!chats[0]) throw new GatewayError('You are not a member of this conversation.', 403)
+      }
+      await client.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [supabaseUserId])
+      const { rows: usage } = await client.query(
+        `select coalesce(sum(size_bytes), 0)::bigint as used_bytes
+           from public.storage_files`,
+      )
+      const { rows: quota } = await client.query(
+        `select quota_bytes from public.user_storage_quotas where user_id = $1`,
+        [supabaseUserId],
+      )
+      const quotaBytes = Number(quota[0]?.quota_bytes) || 5368709120
+      if (Number(usage[0]?.used_bytes || 0) + sizeBytes > quotaBytes) {
+        throw new GatewayError('There is not enough storage space for this file.', 413)
+      }
+      const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80) || 'file'
+      const path = `${supabaseUserId}/${chatId || 'direct'}/${randomUUID()}-${safeName}`
+      const { rows } = await client.query(
+        `insert into public.storage_files
+          (user_id, chat_id, file_name, file_type, mime_type, size_bytes, duration_seconds, storage_path)
+         values ($1, $2, $3, $4, $5, $6, $7, $8)
+         returning id`,
+        [supabaseUserId, chatId, fileName, fileType, mimeType, sizeBytes, durationSeconds, path],
+      )
+      const { data, error } = await admin.storage.from('chat-files').createSignedUploadUrl(path, { upsert: false })
+      if (error || !data?.token) {
+        await client.query('delete from public.storage_files where id = $1', [rows[0].id])
+        throw new GatewayError('Could not prepare the secure upload.', 503)
+      }
+      return { fileId: rows[0].id, path, token: data.token }
+    }
+    case 'storage.upload.finish': {
+      const fileId = requiredString(body.fileId, 'File ID', 64)
+      if (!validUuid(fileId)) throw new GatewayError('File ID is invalid.')
+      const { rows } = await client.query(
+        `select id, storage_path from public.storage_files where id = $1`,
+        [fileId],
+      )
+      if (!rows[0]) throw new GatewayError('The uploaded file is unavailable.', 404)
+      const { data, error } = await admin.storage.from('chat-files').createSignedUrl(rows[0].storage_path, 60 * 60 * 24 * 365)
+      if (error || !data?.signedUrl) throw new GatewayError('Could not create a secure file link.', 503)
+      return { fileUrl: data.signedUrl }
+    }
+    case 'storage.upload.cancel': {
+      const fileId = requiredString(body.fileId, 'File ID', 64)
+      if (!validUuid(fileId)) throw new GatewayError('File ID is invalid.')
+      const { rows } = await client.query(
+        `select id, storage_path from public.storage_files where id = $1`,
+        [fileId],
+      )
+      if (!rows[0]) return { deleted: false }
+      const { error } = await admin.storage.from('chat-files').remove([rows[0].storage_path])
+      if (error) throw new GatewayError('The incomplete upload could not be removed.', 503)
+      await client.query('delete from public.storage_files where id = $1', [fileId])
+      return { deleted: true }
+    }
+    case 'storage.delete': {
+      const ids = Array.isArray(body.fileIds) ? [...new Set(body.fileIds.map(String))] : []
+      if (ids.length > 100 || ids.some((id) => !validUuid(id))) throw new GatewayError('File IDs are invalid.')
+      if (!ids.length) return { deleted: 0 }
+      const { rows } = await client.query(
+        `select id, storage_path from public.storage_files where id = any($1::uuid[])`,
+        [ids],
+      )
+      const paths = rows.map((row) => row.storage_path).filter(Boolean)
+      if (paths.length) {
+        const { error } = await admin.storage.from('chat-files').remove(paths)
+        if (error) throw new GatewayError('The files could not be removed from storage.', 503)
+      }
+      const { rowCount } = await client.query(
+        `delete from public.storage_files where id = any($1::uuid[])`,
+        [rows.map((row) => row.id)],
+      )
+      return { deleted: rowCount }
+    }
+    case 'admin.verify': {
+      const { rows } = await client.query(
+        `select public.has_role($1, 'admin'::public.app_role) as is_admin`,
+        [supabaseUserId],
+      )
+      if (!rows[0]?.is_admin) throw new GatewayError('Administrator access is required.', 403)
+      return { isAdmin: true }
+    }
+    case 'admin.dashboard': {
+      await requireAdmin(client, supabaseUserId)
+      const [{ rows: members }, { rows: messages }] = await Promise.all([
+        client.query(
+          `select id, member_id, full_name, created_at from public.members
+            order by created_at desc limit 20`,
+        ),
+        client.query(
+          `select id, chat_id, type, content, created_at from public.messages
+            order by created_at desc limit 20`,
+        ),
+      ])
+      return { members, messages }
+    }
+    case 'admin.members.list': {
+      await requireAdmin(client, supabaseUserId)
+      const term = String(body.query || '').trim().slice(0, 100)
+      const pattern = `%${term.replace(/[\\%_]/g, '\\$&')}%`
+      const [{ rows: members }, { rows: admins }] = await Promise.all([
+        client.query(
+          `select id, member_id, first_name, last_name, full_name, email, email_verified, bio, created_at
+             from public.members
+            where $1 = '' or full_name ilike $2 escape '\\'
+              or email ilike $2 escape '\\' or member_id ilike $2 escape '\\'
+            order by created_at desc limit 100`,
+          [term, pattern],
+        ),
+        client.query(`select user_id from public.admin_list_admins()`),
+      ])
+      return { members, admins }
+    }
+    case 'admin.member.update': {
+      const memberId = requiredString(body.memberId, 'Member ID', 64)
+      if (!validUuid(memberId)) throw new GatewayError('Member ID is invalid.')
+      const firstName = optionalString(body.firstName, 'First name', 80)
+      const lastName = optionalString(body.lastName, 'Last name', 80)
+      const bio = optionalString(body.bio, 'Bio', 500)
+      await client.query(
+        `select public.admin_update_member($1, $2, $3, $4)`,
+        [memberId, firstName, lastName, bio],
+      )
+      return { ok: true }
+    }
+    case 'admin.role.set': {
+      const memberId = requiredString(body.memberId, 'Member ID', 64)
+      if (!validUuid(memberId)) throw new GatewayError('Member ID is invalid.')
+      await client.query(
+        `select public.admin_set_admin_role($1, $2)`,
+        [memberId, body.grant === true],
+      )
+      return { ok: true }
+    }
+    case 'payments.settings.get': {
+      const { rows } = await client.query(
+        `select id, wallet_address, qr_image_url, network, updated_at
+           from public.payment_settings where id = 1`,
+      )
+      const settings = rows[0] || null
+      let qrUrl = null
+      if (settings?.qr_image_url) {
+        const { data, error } = await admin.storage.from('payment-qr').createSignedUrl(settings.qr_image_url, 3600)
+        if (error) throw new GatewayError('Could not load the payment QR code.', 503)
+        qrUrl = data.signedUrl
+      }
+      return { settings: settings ? { ...settings, qrUrl } : null }
+    }
+    case 'payments.settings.save': {
+      await requireAdmin(client, supabaseUserId)
+      const walletAddress = requiredString(body.walletAddress, 'Wallet address', 42)
+      if (!/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) throw new GatewayError('The BEP20 wallet address is invalid.')
+      const path = body.qrPath == null ? null : requiredString(body.qrPath, 'QR image path', 255)
+      if (path && !/^qr-[a-f0-9-]+\.(png|jpe?g|webp)$/i.test(path)) {
+        throw new GatewayError('The QR image path is invalid.')
+      }
+      const { rows } = await client.query(
+        `insert into public.payment_settings (id, wallet_address, qr_image_url, network)
+         values (1, $1, $2, 'BEP20')
+         on conflict (id) do update set wallet_address = excluded.wallet_address,
+           qr_image_url = excluded.qr_image_url, network = excluded.network
+         returning id, wallet_address, qr_image_url, network, updated_at`,
+        [walletAddress, path],
+      )
+      return { settings: rows[0] }
+    }
+    case 'payments.qr.upload.prepare': {
+      await requireAdmin(client, supabaseUserId)
+      const fileName = requiredString(body.fileName, 'File name', 255)
+      const mimeType = requiredString(body.mimeType, 'Image type', 100).toLowerCase()
+      const extensions = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
+      if (!extensions[mimeType] || Number(body.sizeBytes) > 5 * 1024 * 1024) {
+        throw new GatewayError('Choose a PNG, JPEG, or WebP image under 5 MB.')
+      }
+      const path = `qr-${randomUUID()}.${extensions[mimeType]}`
+      const { data, error } = await admin.storage.from('payment-qr').createSignedUploadUrl(path, { upsert: false })
+      if (error || !data?.token) throw new GatewayError('Could not prepare the QR image upload.', 503)
+      return { path, token: data.token }
+    }
+    case 'payments.purchase.list': {
+      const userOnly = body.admin !== true
+      if (!userOnly) await requireAdmin(client, supabaseUserId)
+      const { rows } = await client.query(
+        `select * from public.storage_purchases
+          where ($1::boolean = false or user_id = $2)
+          order by created_at desc limit $3`,
+        [userOnly, supabaseUserId, body.admin === true ? 30 : 200],
+      )
+      return { purchases: rows }
+    }
+    case 'payments.purchase.get': {
+      const purchaseId = requiredString(body.purchaseId, 'Purchase ID', 64)
+      if (!validUuid(purchaseId)) throw new GatewayError('Purchase ID is invalid.')
+      const { rows } = await client.query(
+        `select * from public.storage_purchases where id = $1`,
+        [purchaseId],
+      )
+      return { purchase: rows[0] || null }
+    }
+    case 'payments.submit': {
+      const tier = requiredString(body.tier, 'Storage plan', 40)
+      const txReference = optionalString(body.txReference, 'Transaction reference', 120)
+      const { rows } = await client.query(
+        `select public.submit_usdt_payment($1, $2) as id`,
+        [tier, txReference],
+      )
+      return { purchaseId: rows[0].id }
+    }
+    case 'payments.review': {
+      const purchaseId = requiredString(body.purchaseId, 'Purchase ID', 64)
+      if (!validUuid(purchaseId) || typeof body.approve !== 'boolean') throw new GatewayError('Payment review details are invalid.')
+      await client.query(`select public.review_usdt_payment($1, $2)`, [purchaseId, body.approve])
+      return { ok: true }
+    }
+    case 'payments.admin.queue': {
+      await requireAdmin(client, supabaseUserId)
+      const { rows } = await client.query(
+        `select * from public.storage_purchases
+          where status = 'awaiting_approval'
+          order by created_at asc limit 100`,
+      )
+      return { purchases: rows }
+    }
+    case 'payments.admin.webhooks': {
+      await requireAdmin(client, supabaseUserId)
+      const [{ rows: events }, { rows: purchases }] = await Promise.all([
+        client.query(
+          `select * from public.payment_webhook_events
+            order by received_at desc limit 50`,
+        ),
+        client.query(
+          `select id, user_id, tier, amount_cents, status, created_at, updated_at
+             from public.storage_purchases
+            order by created_at desc limit 30`,
+        ),
+      ])
+      return { events, purchases }
+    }
+    case 'verification.badge': {
+      const memberId = requiredString(body.userId, 'Member ID', 64)
+      if (!validUuid(memberId)) throw new GatewayError('Member ID is invalid.')
+      const { rows } = await client.query(
+        `select public.get_verification_badge($1) as badge`,
+        [memberId],
+      )
+      return { badge: rows[0]?.badge || 'none' }
+    }
+    case 'verification.get': {
+      const { rows } = await client.query(
+        `select status, match_score, reviewer_note, created_at
+           from public.identity_verifications where user_id = $1`,
+        [supabaseUserId],
+      )
+      return { record: rows[0] || null }
+    }
+    case 'verification.submit': {
+      const selfiePath = requiredString(body.selfiePath, 'Selfie path', 255)
+      const idPath = requiredString(body.idPath, 'Identity document path', 255)
+      if (!selfiePath.startsWith(`${supabaseUserId}/`) || !idPath.startsWith(`${supabaseUserId}/`)) {
+        throw new GatewayError('Identity document paths are invalid.')
+      }
+      const score = Number(body.matchScore)
+      if (!Number.isFinite(score) || score < 0 || score > 1) throw new GatewayError('Face match score is invalid.')
+      const { rows } = await client.query(
+        `insert into public.identity_verifications
+          (user_id, status, match_score, selfie_path, id_document_path, reviewer_note, reviewed_by, reviewed_at)
+         values ($1, 'pending', $2, $3, $4, null, null, null)
+         on conflict (user_id) do update set status = 'pending', match_score = excluded.match_score,
+           selfie_path = excluded.selfie_path, id_document_path = excluded.id_document_path,
+           reviewer_note = null, reviewed_by = null, reviewed_at = null
+         returning status, match_score, reviewer_note, created_at`,
+        [supabaseUserId, Number(score.toFixed(3)), selfiePath, idPath],
+      )
+      return { record: rows[0] }
+    }
+    case 'verification.admin.queue': {
+      await requireAdmin(client, supabaseUserId)
+      const { rows } = await client.query(
+        `select id, user_id, status, match_score, selfie_path, id_document_path,
+                reviewer_note, created_at
+           from public.identity_verifications
+          where status = 'pending'
+          order by created_at asc limit 50`,
+      )
+      const signedRows = await Promise.all(rows.map(async (row) => {
+        const [selfie, document] = await Promise.all([
+          admin.storage.from('identity-docs').createSignedUrl(row.selfie_path, 600),
+          admin.storage.from('identity-docs').createSignedUrl(row.id_document_path, 600),
+        ])
+        if (selfie.error || document.error) throw new GatewayError('Could not create a secure review link.', 503)
+        return { ...row, selfieUrl: selfie.data.signedUrl, idUrl: document.data.signedUrl }
+      }))
+      return { verifications: signedRows }
+    }
+    case 'verification.admin.review': {
+      const id = requiredString(body.id, 'Verification ID', 64)
+      if (!validUuid(id) || !['approved', 'rejected'].includes(body.status)) {
+        throw new GatewayError('Verification review details are invalid.')
+      }
+      const note = optionalString(body.note, 'Reviewer note', 2000)
+      const { rows } = await client.query(
+        `update public.identity_verifications
+            set status = $2, reviewer_note = $3, reviewed_by = $4, reviewed_at = now()
+          where id = $1 and status = 'pending'
+          returning id`,
+        [id, body.status, note, supabaseUserId],
+      )
+      if (!rows[0]) throw new GatewayError('This verification is no longer pending.', 409)
+      return { ok: true }
+    }
+    case 'verification.upload.prepare': {
+      const fileName = requiredString(body.fileName, 'File name', 255)
+      const mimeType = requiredString(body.mimeType, 'Image type', 100).toLowerCase()
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType) || Number(body.sizeBytes) > 15 * 1024 * 1024) {
+        throw new GatewayError('Identity images must be JPEG, PNG, or WebP and under 15 MB.')
+      }
+      const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80)
+      const path = `${supabaseUserId}/${randomUUID()}-${safeName}`
+      const { data, error } = await admin.storage.from('identity-docs').createSignedUploadUrl(path, { upsert: false })
+      if (error || !data?.token) throw new GatewayError('Could not prepare a secure identity image upload.', 503)
+      return { path, token: data.token }
+    }
+    case 'admin.diagnostics': {
+      await requireAdmin(client, supabaseUserId)
+      return { allowed: true }
+    }
+    default:
+      throw new GatewayError('Unsupported data operation.', 404)
+  }
+}
+
+async function requireAdmin(client, userId) {
+  const { rows } = await client.query(
+    `select public.has_role($1, 'admin'::public.app_role) as is_admin`,
+    [userId],
+  )
+  if (!rows[0]?.is_admin) throw new GatewayError('Administrator access is required.', 403)
+}
+
+export function validUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''))
+}
+
+function requiredString(value, label, maxLength) {
+  const text = String(value ?? '')
+  if (!text || text.length > maxLength) throw new GatewayError(`${label} is invalid.`)
+  return text
+}
+
+function optionalString(value, label, maxLength) {
+  if (value == null) return null
+  const text = String(value)
+  if (text.length > maxLength) throw new GatewayError(`${label} is too long.`)
+  return text
+}
+
+function getAdminClient(config) {
+  return createClient(config.supabaseUrl, config.serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+}
+
+async function getPool(config) {
+  poolPromise ||= createDatabasePool(config.poolerUrl).catch((error) => {
+    poolPromise = null
+    throw error
+  })
+  return poolPromise
+}
+
+async function inUserTransaction(config, account, operation) {
+  const admin = getAdminClient(config)
+  const identity = await linkAppwriteIdentity(admin, account)
+  const pool = await getPool(config)
+  return withAuthenticatedDatabaseTransaction(pool, identity.supabaseUserId, (client) => operation(client, identity, admin))
+}
+
+export async function dispatchUserData(config, account, body) {
+  return inUserTransaction(config, account, async (client, identity, admin) => {
+    return executeUserDataOperation(client, identity, body, admin)
+  })
+}
+
+export async function authenticateGatewayRequest(req) {
+  const config = getConfiguration()
+  if (!config) throw new GatewayError('The Appwrite data gateway is not configured on the server.', 503)
+  const token = String(req.headers.authorization || '').match(/^Bearer\s+(\S+)$/i)?.[1]
+  if (!token || token.length > 8192) throw new GatewayError('A valid Appwrite session is required.', 401)
+  const account = await verifyAppwriteSession({
+    endpoint: config.endpoint,
+    projectId: config.projectId,
+    token,
+  })
+  return { config, account }
+}
+
+export { IdentityLinkError }

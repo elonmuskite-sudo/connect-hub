@@ -21,6 +21,36 @@ test('schema dry-run validates checked-in versioned migrations without connectin
   assert.match(result.migrations[0].checksum, /^[a-f0-9]{64}$/)
 })
 
+test('self-service admin claim is removed from the canonical schema and existing databases', () => {
+  const schema = fs.readFileSync(path.join(root, 'docs', 'supabase-schema.sql'), 'utf8')
+  const settingsPage = fs.readFileSync(path.join(root, 'src', 'pages', 'SettingsPage.jsx'), 'utf8')
+  const migrationsDir = path.join(root, 'supabase', 'migrations')
+  const removalMigration = fs.readdirSync(migrationsDir)
+    .find((file) => file.endsWith('_remove_self_service_admin_claim.sql'))
+
+  assert.ok(removalMigration, 'expected a forward migration to remove the self-service admin claim')
+  assert.doesNotMatch(schema, /(?:create|grant execute on) function public\.claim_first_admin/i)
+  assert.doesNotMatch(settingsPage, /ClaimAdminCard|claim_first_admin/)
+
+  const migration = fs.readFileSync(path.join(migrationsDir, removalMigration), 'utf8')
+  assert.match(migration, /drop function if exists public\.claim_first_admin\(\)/i)
+  assert.match(migration, /drop function if exists private\.claim_first_admin\(\)/i)
+})
+
+test('Appwrite identity links remain inaccessible to browser roles', () => {
+  const schema = fs.readFileSync(path.join(root, 'docs', 'supabase-schema.sql'), 'utf8')
+  const migration = fs.readFileSync(
+    path.join(root, 'supabase', 'migrations', '20261013232516_appwrite_identity_links.sql'),
+    'utf8',
+  )
+  for (const sql of [schema, migration]) {
+    assert.match(sql, /create table public\.appwrite_identity_links/i)
+    assert.match(sql, /enable row level security/i)
+    assert.match(sql, /revoke all on public\.appwrite_identity_links from public, anon, authenticated/i)
+    assert.match(sql, /grant all on public\.appwrite_identity_links to service_role/i)
+  }
+})
+
 test('schema dry-run rejects non-PostgreSQL URLs', () => {
   assert.throws(
     () => inspectSupabaseSchema({ databaseUrl: 'https://example.invalid/database', root }),

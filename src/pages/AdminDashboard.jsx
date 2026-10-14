@@ -72,7 +72,7 @@ export default function AdminDashboard() {
             Database changes are applied by running docs/supabase-schema.sql in your Supabase SQL editor.
           </p>
           <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
-            Run <code>npm run admin:bootstrap</code> once to create the admin account from ADMIN_EMAIL and ADMIN_PASSWORD.
+            Run <code>npm run admin:bootstrap</code> from a trusted local environment to create or grant the initial admin account.
           </p>
         </section>
 

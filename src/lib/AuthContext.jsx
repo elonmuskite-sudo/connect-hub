@@ -15,6 +15,14 @@ import {
   updateMemberProfile,
   verifyEmailCode as verifyEmailOtp,
 } from './supabase'
+import {
+  completeAppwriteRecovery,
+  createAppwriteAccount,
+  getAppwriteProfile,
+  isAppwriteAuthEnabled,
+  rememberAppwriteRecoveryCode,
+  resendAppwriteVerification,
+} from './appwrite'
 
 const noopAsync = async () => { throw new Error('Account services are still loading. Please try again.') }
 const DEFAULT_AUTH = {
@@ -74,6 +82,18 @@ export function AuthProvider({ children }) {
       window.localStorage.removeItem('nexus-chat-users')
       window.localStorage.removeItem('nexus-chat-session')
     }
+    if (isAppwriteAuthEnabled()) {
+      let active = true
+      getAppwriteProfile()
+        .then((profile) => { if (active) setUser(normalizeUser(profile)) })
+        .catch((error) => {
+          if (error?.code !== 401) console.error('Appwrite profile lookup failed', error)
+          if (active) setUser(null)
+        })
+        .finally(() => { if (active) setLoading(false) })
+      return () => { active = false }
+    }
+
     if (!isSupabaseConfigured() || !supabase) {
       setLoading(false)
       return undefined
@@ -140,6 +160,11 @@ export function AuthProvider({ children }) {
 
   const verifyEmailCode = useCallback(async (email, token, purpose = 'signup', password = '') => {
     if (!isSupabaseConfigured()) throw new Error('Email verification is not configured.')
+    if (isAppwriteAuthEnabled()) {
+      if (purpose !== 'recovery') throw new Error('Use the verification link sent to your email to verify this account.')
+      rememberAppwriteRecoveryCode(token)
+      return { ok: true }
+    }
     const authData = await verifyEmailOtp(email, token, purpose, password)
     const authUser = authData?.user || authData?.session?.user
     if (!authUser && purpose !== 'recovery') {
@@ -160,6 +185,14 @@ export function AuthProvider({ children }) {
 
   const resendVerificationCode = useCallback(async (email, purpose = 'signup') => {
     if (!isSupabaseConfigured()) throw new Error('Email verification is not configured.')
+    if (isAppwriteAuthEnabled()) {
+      if (purpose === 'recovery') {
+        await startPasswordRecoveryCode(email)
+      } else {
+        await resendAppwriteVerification()
+      }
+      return
+    }
     await resendEmailCode(email, purpose)
   }, [])
 
@@ -176,6 +209,15 @@ export function AuthProvider({ children }) {
     const cleanPassword = String(password || '')
     if (!normalizedEmail) throw new Error('Email is required.')
     if (cleanPassword.length < 8) throw new Error('Password must be at least 8 characters.')
+    if (isAppwriteAuthEnabled()) {
+      await createAppwriteAccount({
+        email: normalizedEmail,
+        password: cleanPassword,
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+      })
+      return { user: null, email: normalizedEmail, needsEmailConfirmation: true, verificationMethod: 'link' }
+    }
     const nexusId = generateNexusId()
     await startSignupEmailCode({
       email: normalizedEmail,
@@ -203,7 +245,11 @@ export function AuthProvider({ children }) {
     if (String(newPassword || '').length < 8) {
       throw new Error('Password must be at least 8 characters.')
     }
-    await updateAuthenticatedPassword(newPassword)
+    if (isAppwriteAuthEnabled()) {
+      await completeAppwriteRecovery(newPassword)
+    } else {
+      await updateAuthenticatedPassword(newPassword)
+    }
     await signOutFromSupabase()
     setUser(null)
     return { ok: true }

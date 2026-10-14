@@ -1,4 +1,5 @@
 import { findMemberByNexusId, supabase } from './supabase'
+import { appwriteData, isAppwriteAuthEnabled } from './appwrite'
 import { reactionContent } from './chatProtocol'
 
 const STORAGE_KEY = 'nexus-chat-state-v1'
@@ -6,7 +7,7 @@ const CONTACTS_STORAGE_KEY = 'nexus-contacts-state-v1'
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export const newId = () => (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`)
-export const isChatServiceAvailable = () => Boolean(supabase)
+export const isChatServiceAvailable = () => Boolean(supabase) || isAppwriteAuthEnabled()
 
 function readJson(key) {
   if (typeof window === 'undefined') return []
@@ -38,6 +39,53 @@ function mapMessage(row) {
 }
 
 export function startRealtimeListeners() {
+  if (isAppwriteAuthEnabled()) {
+    let active = true
+    let cursor = { since: new Date().toISOString(), afterId: '00000000-0000-1000-8000-000000000000' }
+    const poll = async () => {
+      if (!active) return
+      try {
+        const [{ messages = [], cursor: nextCursor }, { chats = [] }] = await Promise.all([
+          appwriteData('events.poll', { since: cursor.since, afterId: cursor.afterId }),
+          appwriteData('chats.list'),
+        ])
+        cursor = nextCursor || cursor
+        const localChats = readLocalChats()
+        const mappedChats = chats.map(({ chat_members: members, ...chat }) => ({
+          ...chat,
+          id: String(chat.id),
+          participant_ids: (members || []).map((member) => String(member.profile_id)),
+        }))
+        writeLocalChats(mappedChats.map((chat) => {
+          const existing = localChats.find((item) => String(item.id) === chat.id)
+          return { ...existing, ...chat, messages: existing?.messages || [] }
+        }))
+        for (const row of messages) {
+          const known = readLocalChats().some((chat) => String(chat.id) === String(row.chat_id))
+          if (!known) continue
+          await appendMessage(String(row.chat_id), mapMessage(row))
+          if (row.type !== 'reaction') {
+            emit('nexus:incoming-notification', {
+              title: 'New message',
+              preview: row.encrypted ? 'Encrypted message' : row.type === 'text' ? row.content : 'New attachment received',
+              avatarUrl: '/logo.png',
+              type: 'message',
+            })
+          }
+        }
+        notifyChatUpdate()
+        await syncContactsFromCloud('appwrite')
+      } catch (error) {
+        console.error('Appwrite data sync failed', error)
+      }
+    }
+    void poll()
+    const timer = window.setInterval(() => { void poll() }, 5000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }
   if (!supabase) return null
   let currentUserId = null
   supabase.auth.getSession().then(({ data }) => { currentUserId = data?.session?.user?.id || null }).catch(() => {})
@@ -75,6 +123,21 @@ export function stopRealtimeListeners(unsubscribe) {
 }
 
 export async function readChats(userId) {
+  if (isAppwriteAuthEnabled()) {
+    const { chats = [] } = await appwriteData('chats.list')
+    const mappedChats = chats.map(({ chat_members: members, ...chat }) => ({
+      ...chat,
+      id: String(chat.id),
+      participant_ids: (members || []).map((member) => String(member.profile_id)),
+    }))
+    const localById = new Map(readLocalChats().map((chat) => [String(chat.id), chat]))
+    const merged = mappedChats.map((chat) => {
+      const existing = localById.get(chat.id)
+      return { ...existing, ...chat, messages: existing?.messages || [] }
+    })
+    writeLocalChats(merged)
+    return merged
+  }
   let remoteChats = null
   if (supabase && userId) {
     try {
@@ -117,6 +180,24 @@ export async function getChats(userId) {
 }
 
 export async function sendChatMessage(chatId, message) {
+  if (isAppwriteAuthEnabled()) {
+    if (typeof message.content !== 'string' || !message.content.trim() || message.content.length > 65535) throw new Error('Message must contain between 1 and 65,535 characters.')
+    if (message.file_url?.startsWith('blob:')) throw new Error('Attachment storage is not connected. This file has not been sent.')
+    const { message: savedMessage } = await appwriteData('messages.send', {
+      id: UUID_REGEX.test(String(message.id || '')) ? message.id : newId(),
+      chatId: String(chatId),
+      content: message.content,
+      type: message.type || 'text',
+      fileUrl: message.file_url || null,
+      fileName: message.file_name || null,
+      duration: message.duration || null,
+      encrypted: Boolean(message.encrypted),
+      createdAt: message.created_at || new Date().toISOString(),
+    })
+    const saved = mapMessage(savedMessage)
+    await appendMessage(chatId, saved)
+    return saved
+  }
   if (!supabase) throw new Error('The chat service is unavailable. The message was not sent.')
   if (!message.sender_id || typeof message.content !== 'string' || !message.content.trim() || message.content.length > 65535) throw new Error('Message must contain between 1 and 65,535 characters.')
   if (message.file_url?.startsWith('blob:')) throw new Error('Attachment storage is not connected. This file has not been sent.')
@@ -164,6 +245,19 @@ export async function appendMessage(chatId, message) {
 }
 
 export async function getChatById(chatId, userId) {
+  if (isAppwriteAuthEnabled() && UUID_REGEX.test(String(chatId))) {
+    const { chat } = await appwriteData('chats.get', { chatId: String(chatId) })
+    if (!chat) return null
+    const { chat_members: members, ...rest } = chat
+    const hydrated = {
+      ...rest,
+      id: String(rest.id),
+      participant_ids: (members || []).map((member) => String(member.profile_id)),
+      messages: (rest.messages || []).map(mapMessage),
+    }
+    writeLocalChats([hydrated, ...readLocalChats().filter((item) => String(item.id) !== hydrated.id)])
+    return hydrated
+  }
   if (supabase && UUID_REGEX.test(String(chatId))) {
     const { data: chatData, error } = await supabase
       .from('chats').select('id, title, type, avatar_url, encrypted, owner_id, created_at, chat_members(profile_id)')
@@ -189,7 +283,7 @@ export async function getChatById(chatId, userId) {
 
 export async function createChat(chatData) {
   const participantIds = [...new Set((chatData.participantIds || []).map(String).filter(Boolean))]
-  if (participantIds.length && !supabase) throw new Error('Recipient delivery is unavailable because the chat database is not connected.')
+  if (participantIds.length && !supabase && !isAppwriteAuthEnabled()) throw new Error('Recipient delivery is unavailable because the chat database is not connected.')
 
   const newChat = {
     id: newId(), title: chatData.title || 'New Chat', type: chatData.type || 'private',
@@ -199,7 +293,19 @@ export async function createChat(chatData) {
     messages: chatData.messages || [], created_at: new Date().toISOString(),
   }
 
-  if (supabase && newChat.owner_id) {
+  if (isAppwriteAuthEnabled()) {
+    const { chat } = await appwriteData('chats.create', {
+      chatId: newChat.id,
+      title: newChat.title,
+      type: newChat.type,
+      avatarUrl: newChat.avatar_url,
+      encrypted: newChat.encrypted,
+      participantIds,
+    })
+    newChat.id = String(chat.id)
+    newChat.created_at = chat.created_at
+    newChat.owner_id = chat.owner_id
+  } else if (supabase && newChat.owner_id) {
     const { error } = await supabase.from('chats').insert({
       id: newChat.id, title: newChat.title, type: newChat.type, avatar_url: newChat.avatar_url,
       encrypted: newChat.encrypted, owner_id: newChat.owner_id, created_at: newChat.created_at,
@@ -217,6 +323,10 @@ export async function createChat(chatData) {
 
 
 async function getSessionUserId() {
+  if (isAppwriteAuthEnabled()) {
+    const { profile } = await appwriteData('profile.get')
+    return profile?.id || null
+  }
   if (!supabase) return null
   try {
     const { data } = await supabase.auth.getSession()
@@ -239,6 +349,13 @@ function mapCloudContact(row) {
 }
 
 async function syncContactsFromCloud(userId) {
+  if (isAppwriteAuthEnabled()) {
+    const { contacts = [] } = await appwriteData('contacts.list')
+    const mapped = contacts.map(mapCloudContact)
+    writeLocalContacts(mapped)
+    notifyContactsUpdate()
+    return mapped
+  }
   if (!supabase || !userId) return null
   try {
     const { data, error } = await supabase
@@ -258,6 +375,7 @@ async function syncContactsFromCloud(userId) {
 }
 
 function ensureContactsRealtime(userId) {
+  if (isAppwriteAuthEnabled()) return
   if (!supabase || !userId || contactsChannel) return
   contactsChannel = supabase
     .channel('nexus-contacts-sync')
@@ -279,6 +397,18 @@ export async function getContacts() {
 
 export async function addContact(contactData) {
   const userId = await getSessionUserId()
+  if (isAppwriteAuthEnabled()) {
+    const { contact: row } = await appwriteData('contacts.save', {
+      name: contactData.name,
+      nexusId: String(contactData.nexusId || '').replace(/\D/g, ''),
+      avatarUrl: contactData.avatarUrl || null,
+    })
+    const contact = mapCloudContact(row)
+    const contacts = [contact, ...readLocalContacts().filter((item) => item.id !== contact.id && item.nexusId !== contact.nexusId)]
+    writeLocalContacts(contacts)
+    notifyContactsUpdate()
+    return contact
+  }
   if (userId && supabase) {
     const { data, error } = await supabase
       .from('contacts')
@@ -315,7 +445,9 @@ export async function addContact(contactData) {
 
 export async function deleteContact(contactId) {
   const userId = await getSessionUserId()
-  if (userId && supabase) {
+  if (isAppwriteAuthEnabled()) {
+    await appwriteData('contacts.delete', { contactId: String(contactId) })
+  } else if (userId && supabase) {
     await supabase.from('contacts').delete().eq('user_id', userId).eq('id', contactId)
   }
   const contacts = readLocalContacts()

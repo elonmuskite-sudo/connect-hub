@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '../lib/AuthContext'
+import { isAppwriteAuthEnabled } from '../lib/appwrite'
 import { useTheme } from '../hooks/useTheme'
 import AuthShell from '../components/AuthShell'
 
@@ -50,27 +51,45 @@ export default function Register() {
         try {
           sessionStorage.setItem('nexus-pending-verification-email', result.email)
           sessionStorage.setItem('nexus-pending-verification-purpose', 'signup')
-          sessionStorage.setItem('nexus-pending-verification-password', password)
+          if (result.verificationMethod !== 'link') {
+            sessionStorage.setItem('nexus-pending-verification-password', password)
+          }
         } catch {
           // Route state still carries the address for this verification visit.
         }
-        navigate('/verify-email', { replace: true, state: { email: result.email, purpose: 'signup', password } })
+        navigate(
+          result.verificationMethod === 'link' ? '/verify-email?provider=appwrite' : '/verify-email',
+          {
+            replace: true,
+            state: {
+              email: result.email,
+              purpose: 'signup',
+              ...(result.verificationMethod === 'link' ? {} : { password }),
+            },
+          },
+        )
       } else {
         navigate('/app', { replace: true })
       }
     } catch (err) {
       if (err.verificationPending) {
         const pendingEmail = email.trim().toLowerCase()
+        const appwriteMode = isAppwriteAuthEnabled()
         try {
           sessionStorage.setItem('nexus-pending-verification-email', pendingEmail)
           sessionStorage.setItem('nexus-pending-verification-purpose', 'signup')
-          sessionStorage.setItem('nexus-pending-verification-password', password)
+          if (!appwriteMode) sessionStorage.setItem('nexus-pending-verification-password', password)
         } catch {
           // Route state carries the address for this visit.
         }
-        navigate('/verify-email', {
+        navigate(appwriteMode ? '/verify-email?provider=appwrite' : '/verify-email', {
           replace: true,
-          state: { email: pendingEmail, purpose: 'signup', password, notice: 'Your account was created, but email delivery failed. Wait briefly, then use Resend code.' },
+          state: {
+            email: pendingEmail,
+            purpose: 'signup',
+            ...(appwriteMode ? {} : { password }),
+            notice: 'Your account was created, but email delivery failed. Wait briefly, then request another verification message.',
+          },
         })
         return
       }
@@ -97,7 +116,9 @@ export default function Register() {
 
         <div className={`w-full max-w-md rounded-[24px] border p-6 shadow-lg ${themeClasses.card}`}>
           <h2 className="text-2xl font-semibold">Register</h2>
-          <p className={`mt-2 text-sm ${themeClasses.muted}`}>Your account credentials are managed securely by Supabase Auth.</p>
+          <p className={`mt-2 text-sm ${themeClasses.muted}`}>
+            Your account credentials are managed securely by {isAppwriteAuthEnabled() ? 'Appwrite' : 'Supabase Auth'}.
+          </p>
           <form onSubmit={handleSubmit} className="mt-6 space-y-5">
             <div>
               <label className={`mb-2 block text-sm font-medium ${themeClasses.muted}`}>Email address</label>
@@ -159,6 +180,9 @@ export default function Register() {
                   {passwordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
+              <p className={`mt-2 text-xs ${themeClasses.muted}`}>
+                We check against known breached passwords using a partial hash; your password is not sent to the checker.
+              </p>
             </div>
             {error && <p className="text-sm text-rose-400">{error}</p>}
             <button

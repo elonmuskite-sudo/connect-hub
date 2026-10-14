@@ -86,6 +86,9 @@ export default function ResetPassword() {
                 {passwordVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+            <p className={`mt-2 text-xs ${themeClasses.muted}`}>
+              We check against known breached passwords using a partial hash; your password is not sent to the checker.
+            </p>
           </div>
           <div>
             <label className={`mb-2 block text-sm font-medium ${themeClasses.muted}`}>

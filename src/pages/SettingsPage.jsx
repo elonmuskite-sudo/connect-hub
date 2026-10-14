@@ -9,7 +9,6 @@ import VerificationSettings from '../components/chat/settings/VerificationSettin
 import BillingHistory from '../components/chat/settings/BillingHistory'
 import Avatar from '../components/chat/Avatar'
 import VerificationBadge from '../components/chat/VerificationBadge'
-import ClaimAdminCard from '../components/ClaimAdminCard'
 import { useAuth } from '../lib/AuthContext'
 import { ChevronRight, ArrowLeft, Receipt, Bell, Database, HardDrive, LogOut, Palette, ShieldCheck, UserCircle } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
@@ -75,8 +74,6 @@ function SettingsMenu() {
   return (
     <SettingsShell>
       <h2 className="text-2xl font-bold text-foreground mb-6">Settings</h2>
-      <ClaimAdminCard />
-
       <button
         onClick={() => navigate('/app/settings/profile')}
         className="w-full flex items-center gap-4 p-4 bg-muted/40 hover:bg-muted/75 rounded-2xl border border-border mb-6 transition duration-200"

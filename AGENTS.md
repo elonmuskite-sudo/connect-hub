@@ -10,7 +10,9 @@
 <!-- LOVABLE:END -->
 
 # Architecture rules
-- Chat transport is Supabase tables (chats, chat_members, messages) with postgres_changes realtime; Appwrite was removed so there is one backend.
+- Supabase remains the production default for chat and auth. The opt-in Appwrite path uses a server-verified identity gateway and message polling; do not assume an Appwrite JWT is a Supabase JWT.
+- Appwrite-authenticated Supabase data requests must go through server endpoints that verify the Appwrite JWT, resolve the immutable Appwrite-to-Supabase identity link, and execute database work as `authenticated` inside a transaction so existing RLS policies remain in force. Never proxy user data with the service-role key.
+- The Appwrite gateway migration is incomplete: profile, directory, chat, contact, message-polling, and chat-file flows have gateway paths, but admin, payment, identity-document, and other Supabase paths remain. Keep `VITE_AUTH_PROVIDER=supabase` until every enabled surface is migrated and verified.
 - Production runs on the user's own Supabase project via Vercel env vars; docs/supabase-schema.sql is the schema to apply there, since that project is not managed from Lovable.
 - Encode reactions and reply metadata with the versioned chat protocol in existing message fields; this preserves compatibility without requiring unprovisioned database columns.
 - Centralize chat controls in ChatButton and chat presentation effects in global semantic-token CSS; this keeps interaction and theme behavior consistent.

@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from './supabase'
+import { appwriteData, isAppwriteAuthEnabled } from './appwrite'
 
 export const STORAGE_QUOTA_BYTES = 5 * 1024 * 1024 * 1024 // 5 GB per user
 export const MAX_VIDEO_DURATION_SECONDS = 45
@@ -53,6 +54,16 @@ export function probeMediaDuration(file) {
 }
 
 export async function getStorageUsage(userId) {
+  if (isAppwriteAuthEnabled()) {
+    if (!userId) throw new Error('Sign in to view storage usage.')
+    const { files = [], quotaBytes = STORAGE_QUOTA_BYTES, usedBytes = 0 } = await appwriteData('storage.usage')
+    const byType = {}
+    for (const file of files) {
+      const size = Number(file.size_bytes) || 0
+      byType[file.file_type] = (byType[file.file_type] || 0) + size
+    }
+    return { usedBytes, quotaBytes, byType, files }
+  }
   if (!isSupabaseConfigured() || !userId) {
     return { usedBytes: 0, quotaBytes: STORAGE_QUOTA_BYTES, byType: {}, files: [] }
   }
@@ -113,6 +124,38 @@ export async function uploadChatFile({ userId, chatId, file, kind = 'file', dura
   if (!userId) throw new Error('Sign in to send files.')
 
   const { fileType, durationSeconds: duration } = await validateUpload(file, { userId, durationSeconds, kind })
+  if (isAppwriteAuthEnabled()) {
+    if (!supabase) throw new Error('Secure direct uploads require the Supabase project URL and publishable key.')
+    const { fileId, path, token } = await appwriteData('storage.upload.prepare', {
+      chatId: chatId ? String(chatId) : null,
+      fileName: file.name || 'file',
+      fileType,
+      mimeType: file.type || 'application/octet-stream',
+      sizeBytes: file.size,
+      durationSeconds: duration,
+    })
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from(BUCKET)
+        .uploadToSignedUrl(path, token, file, { contentType: file.type || 'application/octet-stream' })
+      if (uploadError) throw new Error(uploadError.message || 'The file could not be uploaded.')
+      const { fileUrl } = await appwriteData('storage.upload.finish', { fileId })
+      return {
+        fileUrl,
+        fileName: file.name || 'file',
+        fileType,
+        durationSeconds: duration,
+        storagePath: path,
+      }
+    } catch (error) {
+      try {
+        await appwriteData('storage.upload.cancel', { fileId })
+      } catch (cleanupError) {
+        console.error('Failed to clean up an incomplete Appwrite-backed file upload', cleanupError)
+      }
+      throw error
+    }
+  }
   const path = `${userId}/${chatId || 'direct'}/${Date.now()}-${safeFileName(file.name)}`
 
   const { error: uploadError } = await supabase.storage
@@ -153,6 +196,9 @@ export async function deleteStorageFiles(userId, fileIds) {
   if (!isSupabaseConfigured() || !userId) throw new Error('File storage is not configured.')
   const ids = (fileIds || []).filter(Boolean)
   if (!ids.length) return { deleted: 0 }
+  if (isAppwriteAuthEnabled()) {
+    return appwriteData('storage.delete', { fileIds: ids })
+  }
 
   const { data: rows, error: readError } = await supabase
     .from('storage_files')

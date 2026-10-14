@@ -67,6 +67,16 @@ create table public.members (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- Appwrite identity links are server-only and may only be changed by the trusted API.
+create table public.appwrite_identity_links (
+  appwrite_user_id text primary key,
+  supabase_user_id uuid not null unique references auth.users(id) on delete cascade,
+  linked_email text not null,
+  linked_at timestamptz not null default now()
+);
+alter table public.appwrite_identity_links enable row level security;
+revoke all on public.appwrite_identity_links from public, anon, authenticated;
+grant all on public.appwrite_identity_links to service_role;
 grant select, update on public.members to authenticated;
 grant all on public.members to service_role;
 alter table public.members enable row level security;
@@ -302,17 +312,6 @@ create or replace function public.admin_exists() returns boolean language sql st
 revoke execute on function public.admin_exists() from public, anon;
 grant execute on function public.admin_exists() to authenticated;
 
-create or replace function public.claim_first_admin() returns void language plpgsql security definer set search_path = public as $$
-begin
-  if auth.uid() is null then raise exception 'Sign in first'; end if;
-  if not exists(select 1 from auth.users where id=auth.uid() and email_confirmed_at is not null) then raise exception 'Confirm your email first'; end if;
-  perform pg_advisory_xact_lock(424242);
-  if exists(select 1 from public.user_roles where role='admin') then raise exception 'An admin already exists'; end if;
-  insert into public.user_roles(user_id, role) values (auth.uid(),'admin');
-end $$;
-revoke execute on function public.claim_first_admin() from public, anon;
-grant execute on function public.claim_first_admin() to authenticated;
-
 -- one pending/approved ID check per user max
 create policy "Signed-in read QR" on storage.objects for select to authenticated using (bucket_id='payment-qr');
 create policy "Admins upload QR" on storage.objects for insert to authenticated with check (bucket_id='payment-qr' and public.has_role(auth.uid(),'admin'));
@@ -344,25 +343,23 @@ grant usage on schema private to authenticated, service_role;
 -- move privileged bodies into the non-exposed schema
 alter function public.submit_usdt_payment(text,text) set schema private;
 alter function public.review_usdt_payment(uuid,boolean) set schema private;
-alter function public.claim_first_admin() set schema private;
 alter function public.admin_exists() set schema private;
 alter function public.get_verification_badge(uuid) set schema private;
 alter function public.lookup_member_by_nexus_id(text) set schema private;
 
 revoke execute on all functions in schema private from public, anon;
 grant execute on function private.submit_usdt_payment(text,text), private.review_usdt_payment(uuid,boolean),
-  private.claim_first_admin(), private.admin_exists(), private.get_verification_badge(uuid),
+  private.admin_exists(), private.get_verification_badge(uuid),
   private.lookup_member_by_nexus_id(text) to authenticated;
 
 -- thin invoker wrappers keep the same API names
 create function public.submit_usdt_payment(_tier text, _tx_reference text) returns uuid language sql security invoker set search_path = public as $$ select private.submit_usdt_payment(_tier, _tx_reference) $$;
 create function public.review_usdt_payment(_purchase_id uuid, _approve boolean) returns void language sql security invoker set search_path = public as $$ select private.review_usdt_payment(_purchase_id, _approve) $$;
-create function public.claim_first_admin() returns void language sql security invoker set search_path = public as $$ select private.claim_first_admin() $$;
 create function public.admin_exists() returns boolean language sql stable security invoker set search_path = public as $$ select private.admin_exists() $$;
 create function public.get_verification_badge(_user_id uuid) returns text language sql stable security invoker set search_path = public as $$ select private.get_verification_badge(_user_id) $$;
 create function public.lookup_member_by_nexus_id(p_member_id text) returns table(id uuid, member_id text, first_name text, last_name text, full_name text, avatar_url text) language sql stable security invoker set search_path = public as $$ select * from private.lookup_member_by_nexus_id(p_member_id) $$;
-revoke execute on function public.submit_usdt_payment(text,text), public.review_usdt_payment(uuid,boolean), public.claim_first_admin(), public.admin_exists(), public.get_verification_badge(uuid), public.lookup_member_by_nexus_id(text) from public, anon;
-grant execute on function public.submit_usdt_payment(text,text), public.review_usdt_payment(uuid,boolean), public.claim_first_admin(), public.admin_exists(), public.get_verification_badge(uuid), public.lookup_member_by_nexus_id(text) to authenticated;
+revoke execute on function public.submit_usdt_payment(text,text), public.review_usdt_payment(uuid,boolean), public.admin_exists(), public.get_verification_badge(uuid), public.lookup_member_by_nexus_id(text) from public, anon;
+grant execute on function public.submit_usdt_payment(text,text), public.review_usdt_payment(uuid,boolean), public.admin_exists(), public.get_verification_badge(uuid), public.lookup_member_by_nexus_id(text) to authenticated;
 
 -- rate limiter is server-only
 revoke execute on function public.consume_auth_email_code_limit(text,integer,integer) from public, anon, authenticated;

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import AuthShell from '../components/AuthShell'
 import { useAuth } from '../lib/AuthContext'
+import { completeAppwriteVerification } from '../lib/appwrite'
 
 const PENDING_EMAIL_KEY = 'nexus-pending-verification-email'
 const PENDING_PURPOSE_KEY = 'nexus-pending-verification-purpose'
@@ -34,6 +35,7 @@ export default function VerifyEmail() {
   const location = useLocation()
   const navigate = useNavigate()
   const { verifyEmailCode, resendVerificationCode } = useAuth()
+  const appwriteProvider = new URLSearchParams(location.search).get('provider') === 'appwrite'
   const [email] = useState(() => location.state?.email || getPendingEmail())
   const [password] = useState(() => location.state?.password || sessionStorage.getItem('nexus-pending-verification-password') || '')
   const [purpose] = useState(() => location.state?.purpose || new URLSearchParams(location.search).get('purpose') || getPendingPurpose())
@@ -51,6 +53,33 @@ export default function VerifyEmail() {
     }, 1000)
     return () => window.clearTimeout(timer)
   }, [resendCooldown])
+
+  useEffect(() => {
+    if (!appwriteProvider) return
+    const params = new URLSearchParams(location.search)
+    const userId = params.get('userId')
+    const secret = params.get('secret')
+    if (!userId || !secret) return
+
+    let active = true
+    setVerifying(true)
+    completeAppwriteVerification(userId, secret)
+      .then(() => {
+        clearPendingEmail()
+        try {
+          sessionStorage.removeItem(PENDING_PURPOSE_KEY)
+          sessionStorage.removeItem('nexus-pending-verification-password')
+        } catch {
+          // Verification succeeded; session storage is optional.
+        }
+        navigate('/login', { replace: true, state: { notice: 'Your email is verified. You can now sign in.' } })
+      })
+      .catch((verifyError) => {
+        if (active) setError(verifyError.message || 'Could not verify this email link. Request a new one and try again.')
+      })
+      .finally(() => { if (active) setVerifying(false) })
+    return () => { active = false }
+  }, [appwriteProvider, location.search, navigate])
 
   const handleVerify = async (event) => {
     event.preventDefault()
@@ -90,6 +119,45 @@ export default function VerifyEmail() {
     } finally {
       setResending(false)
     }
+  }
+
+  if (appwriteProvider) {
+    return (
+      <AuthShell title="Verify your email" subtitle="Open the verification link Appwrite sent to your inbox." compact>
+        <div className="mx-auto w-full max-w-md rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-sm">
+          {verifying && <p role="status" className="text-sm text-muted-foreground">Verifying your email...</p>}
+          {!verifying && !error && (
+            <>
+              <p className="text-sm text-muted-foreground">
+                {email ? `A verification link was sent to ${email}.` : 'Check your inbox for the verification link.'}
+              </p>
+              {message && <p role="status" className="mt-3 text-sm text-emerald-600">{message}</p>}
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={resending || resendCooldown > 0}
+                className="mt-5 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+              >
+                {resending ? 'Sending...' : resendCooldown ? `Resend in ${resendCooldown}s` : 'Resend verification link'}
+              </button>
+            </>
+          )}
+          {error && (
+            <>
+              <p role="alert" className="text-sm text-destructive">{error}</p>
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={resending || resendCooldown > 0}
+                className="mt-5 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+              >
+                {resending ? 'Sending...' : 'Request a new verification link'}
+              </button>
+            </>
+          )}
+        </div>
+      </AuthShell>
+    )
   }
 
   return (
