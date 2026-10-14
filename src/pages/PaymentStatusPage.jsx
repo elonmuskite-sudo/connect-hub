@@ -3,23 +3,44 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { CheckCircle2, Hourglass, XCircle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { formatBytes } from '../lib/storageManager'
+import { appwriteData, isAppwriteAuthEnabled } from '../lib/appwrite'
 
 export default function PaymentStatusPage() {
   const { purchaseId } = useParams()
   const navigate = useNavigate()
   const [purchase, setPurchase] = useState(null)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!supabase) return undefined
-    const load = () => supabase.from('storage_purchases').select('*').eq('id', purchaseId).maybeSingle()
-      .then(({ data }) => data && setPurchase(data))
+    if ((!supabase && !isAppwriteAuthEnabled()) || !purchaseId) return undefined
+    let active = true
+    const load = async () => {
+      try {
+        if (isAppwriteAuthEnabled()) {
+          const { purchase: result } = await appwriteData('payments.purchase.get', { purchaseId })
+          if (!result) throw new Error('Payment not found.')
+          if (active) setPurchase(result)
+        } else {
+          const { data, error: queryError } = await supabase.from('storage_purchases').select('*').eq('id', purchaseId).maybeSingle()
+          if (queryError) throw queryError
+          if (data && active) setPurchase(data)
+        }
+        if (active) setError('')
+      } catch (loadError) {
+        if (active) setError(loadError.message || 'Could not load payment status.')
+      }
+    }
     load()
+    if (isAppwriteAuthEnabled()) {
+      const poll = setInterval(load, 10000)
+      return () => { active = false; clearInterval(poll) }
+    }
     const channel = supabase.channel(`purchase-${purchaseId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'storage_purchases', filter: `id=eq.${purchaseId}` },
         (payload) => setPurchase(payload.new))
       .subscribe()
     const poll = setInterval(load, 10000) // fallback if realtime drops
-    return () => { clearInterval(poll); supabase.removeChannel(channel) }
+    return () => { active = false; clearInterval(poll); supabase.removeChannel(channel) }
   }, [purchaseId])
 
   useEffect(() => {
@@ -32,6 +53,7 @@ export default function PaymentStatusPage() {
   return (
     <div className="flex h-full min-h-[70vh] items-center justify-center p-6">
       <div className="w-full max-w-md rounded-[28px] border border-border bg-card p-8 text-center shadow-sm">
+        {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
         {status === 'completed' ? (
           <>
             <CheckCircle2 className="mx-auto h-14 w-14 text-primary" />

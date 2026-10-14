@@ -2,10 +2,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, CheckCircle2, LoaderCircle, RefreshCw, XCircle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { appwriteData, isAppwriteAuthEnabled } from '../lib/appwrite'
 
 const BROWSER_CHECKS = [
   { service: 'Supabase', key: 'VITE_SUPABASE_URL', configured: Boolean(import.meta.env.VITE_SUPABASE_URL) },
   { service: 'Supabase', key: 'VITE_SUPABASE_ANON_KEY', configured: Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY) },
+  { service: 'Appwrite', key: 'VITE_APPWRITE_ENDPOINT', configured: Boolean(import.meta.env.VITE_APPWRITE_ENDPOINT) },
+  { service: 'Appwrite', key: 'VITE_APPWRITE_PROJECT_ID', configured: Boolean(import.meta.env.VITE_APPWRITE_PROJECT_ID) },
 ]
 
 async function authHeader() {
@@ -81,6 +84,19 @@ export default function AdminDiagnostics() {
 
   const run = useCallback(async () => {
     setLoading(true)
+    if (isAppwriteAuthEnabled()) {
+      try {
+        const result = await appwriteData('admin.diagnostics')
+        setVercel({ checks: result.checks })
+        setFunctions({ tables: result.tables })
+      } catch (error) {
+        setVercel({ error: error.message || 'The Appwrite diagnostics gateway is unavailable.' })
+        setFunctions(null)
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
     const [v, f] = await Promise.all([loadVercel(), loadFunctions()])
     setVercel(v); setFunctions(f); setLoading(false)
   }, [])
@@ -101,8 +117,13 @@ export default function AdminDiagnostics() {
           </button>
         </div>
         <Panel title="Website build" where="Vercel → Environment Variables (needed at build time)" result={{ checks: BROWSER_CHECKS }} />
-        <Panel title="Vercel server" where="Vercel → Environment Variables (used for sign-up email codes)" result={vercel} />
-        <Panel title="Supabase Edge Functions" where="Supabase → Edge Functions → Secrets (used for payments and emails)" result={functions} />
+        <Panel title="Vercel server" where={isAppwriteAuthEnabled()
+          ? 'Vercel → Environment Variables (used by the Appwrite identity gateway)'
+          : 'Vercel → Environment Variables (used for sign-up email codes)'} result={vercel} />
+        <Panel title={isAppwriteAuthEnabled() ? 'Database schema' : 'Supabase Edge Functions'}
+          where={isAppwriteAuthEnabled()
+            ? 'Tables accessible to the authenticated database gateway'
+            : 'Supabase → Edge Functions → Secrets (used for payments and emails)'} result={functions} />
       </main>
     </div>
   )

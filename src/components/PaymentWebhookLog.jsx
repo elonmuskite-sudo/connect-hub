@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { appwriteData, isAppwriteAuthEnabled } from '../lib/appwrite'
 
 const tone = (o) => o === 'storage_added' ? 'text-primary' : ['error', 'rejected'].includes(o) ? 'text-destructive' : 'text-muted-foreground'
 
@@ -11,12 +12,25 @@ export default function PaymentWebhookLog() {
 
   const load = async () => {
     setLoading(true); setError('')
-    const [ev, pu] = await Promise.all([
-      supabase.from('payment_webhook_events').select('*').order('received_at', { ascending: false }).limit(50),
-      supabase.from('storage_purchases').select('id, user_id, tier, amount_cents, status, created_at, updated_at').order('created_at', { ascending: false }).limit(30),
-    ])
-    if (ev.error || pu.error) setError((ev.error || pu.error).message)
-    setEvents(ev.data || []); setPurchases(pu.data || []); setLoading(false)
+    try {
+      if (isAppwriteAuthEnabled()) {
+        const data = await appwriteData('payments.admin.webhooks')
+        setEvents(data.events || [])
+        setPurchases(data.purchases || [])
+      } else {
+        const [ev, pu] = await Promise.all([
+          supabase.from('payment_webhook_events').select('*').order('received_at', { ascending: false }).limit(50),
+          supabase.from('storage_purchases').select('id, user_id, tier, amount_cents, status, created_at, updated_at').order('created_at', { ascending: false }).limit(30),
+        ])
+        if (ev.error || pu.error) throw (ev.error || pu.error)
+        setEvents(ev.data || [])
+        setPurchases(pu.data || [])
+      }
+    } catch (loadError) {
+      setError(loadError.message || 'Could not load payment activity.')
+    } finally {
+      setLoading(false)
+    }
   }
   useEffect(() => { load() }, [])
 

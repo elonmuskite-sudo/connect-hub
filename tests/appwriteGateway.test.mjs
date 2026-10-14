@@ -137,3 +137,203 @@ test('storage deletion removes only paths selected under the authenticated RLS c
   assert.deepEqual(removed, [`${userId}/direct/file.png`])
   assert.deepEqual(result, { deleted: 1 })
 })
+
+test('chat upload completion verifies Storage’s actual object size and content type', async () => {
+  const fileId = '123e4567-e89b-42d3-a456-426614174003'
+  const client = makeClient((sql) => {
+    assert.match(sql, /select id, storage_path, size_bytes, mime_type/)
+    return { rows: [{ id: fileId, storage_path: `${userId}/direct/file.png`, size_bytes: 1024, mime_type: 'image/png' }] }
+  })
+  const admin = {
+    storage: {
+      from(bucket) {
+        assert.equal(bucket, 'chat-files')
+        return {
+          async info() {
+            return { data: { size: 1024, content_type: 'image/png' }, error: null }
+          },
+          async createSignedUrl() {
+            return { data: { signedUrl: 'https://storage.example/signed-file' }, error: null }
+          },
+        }
+      },
+    },
+  }
+
+  const result = await executeUserDataOperation(client, { supabaseUserId: userId }, {
+    action: 'storage.upload.finish',
+    fileId,
+  }, admin)
+
+  assert.deepEqual(result, { fileUrl: 'https://storage.example/signed-file' })
+})
+
+test('admin dashboard rejects a non-admin before reading workspace data', async () => {
+  const client = makeClient((sql) => {
+    assert.match(sql, /public\.has_role/)
+    return { rows: [{ is_admin: false }] }
+  })
+
+  await assert.rejects(
+    executeUserDataOperation(client, { supabaseUserId: userId }, { action: 'admin.dashboard' }),
+    { status: 403 },
+  )
+  assert.equal(client.calls.length, 1)
+})
+
+test('admin member update requires admin role and calls the existing guarded RPC', async () => {
+  const targetId = '123e4567-e89b-42d3-a456-426614174001'
+  const client = makeClient((sql, values) => {
+    if (sql.includes('public.has_role')) return { rows: [{ is_admin: true }] }
+    assert.match(sql, /public\.admin_update_member/)
+    assert.deepEqual(values, [targetId, 'Ada', 'Lovelace', ''])
+    return { rows: [] }
+  })
+
+  const result = await executeUserDataOperation(client, { supabaseUserId: userId }, {
+    action: 'admin.member.update',
+    memberId: targetId,
+    firstName: 'Ada',
+    lastName: 'Lovelace',
+    bio: '',
+  })
+
+  assert.deepEqual(result, { ok: true })
+  assert.equal(client.calls.length, 1)
+})
+
+test('payment QR settings reject actual Storage objects over the upload limit', async () => {
+  const client = makeClient((sql) => {
+    assert.match(sql, /public\.has_role/)
+    return { rows: [{ is_admin: true }] }
+  })
+  const admin = {
+    storage: {
+      from(bucket) {
+        assert.equal(bucket, 'payment-qr')
+        return {
+          async info() {
+            return { data: { size: 5 * 1024 * 1024 + 1, content_type: 'image/png' }, error: null }
+          },
+        }
+      },
+    },
+  }
+
+  await assert.rejects(
+    executeUserDataOperation(client, { supabaseUserId: userId }, {
+      action: 'payments.settings.save',
+      walletAddress: '0x1234567890123456789012345678901234567890',
+      qrPath: 'qr-123e4567-e89b-42d3-a456-426614174001.png',
+    }, admin),
+    { status: 400 },
+  )
+  assert.equal(client.calls.length, 1)
+})
+
+test('identity uploads are scoped to the verified identity and reject invalid sizes', async () => {
+  const client = makeClient(() => assert.fail('Upload validation must precede database access'))
+  let requestedPath
+  const admin = {
+    storage: {
+      from(bucket) {
+        assert.equal(bucket, 'identity-docs')
+        return {
+          async createSignedUploadUrl(path) {
+            requestedPath = path
+            return { data: { token: 'identity-upload-token' }, error: null }
+          },
+        }
+      },
+    },
+  }
+
+  const result = await executeUserDataOperation(client, { supabaseUserId: userId }, {
+    action: 'verification.upload.prepare',
+    fileName: 'selfie.jpg',
+    mimeType: 'image/jpeg',
+    sizeBytes: 1024,
+  }, admin)
+
+  assert.equal(result.token, 'identity-upload-token')
+  assert.equal(result.path, requestedPath)
+  assert.match(result.path, new RegExp(`^${userId}/`))
+  await assert.rejects(
+    executeUserDataOperation(client, { supabaseUserId: userId }, {
+      action: 'verification.upload.prepare',
+      fileName: 'large.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 0,
+    }, admin),
+    { status: 400 },
+  )
+})
+
+test('verification submission cannot register another user’s storage paths', async () => {
+  const client = makeClient(() => assert.fail('Invalid paths must be rejected before database access'))
+  await assert.rejects(
+    executeUserDataOperation(client, { supabaseUserId: userId }, {
+      action: 'verification.submit',
+      selfiePath: 'another-user/selfie.jpg',
+      idPath: 'another-user/id.jpg',
+      matchScore: 0.9,
+    }),
+    { status: 400 },
+  )
+  assert.equal(client.calls.length, 0)
+})
+
+test('verification submission checks actual private object metadata before inserting a record', async () => {
+  const selfiePath = `${userId}/selfie.jpg`
+  const idPath = `${userId}/identity.png`
+  const client = makeClient((sql, values) => {
+    assert.match(sql, /insert into public\.identity_verifications/)
+    assert.deepEqual(values, [userId, 0.9, selfiePath, idPath])
+    return { rows: [{ status: 'pending', match_score: '0.9' }] }
+  })
+  const admin = {
+    storage: {
+      from(bucket) {
+        assert.equal(bucket, 'identity-docs')
+        return {
+          async info(path) {
+            return {
+              data: {
+                size: 1024,
+                content_type: path === selfiePath ? 'image/jpeg' : 'image/png',
+              },
+              error: null,
+            }
+          },
+        }
+      },
+    },
+  }
+
+  const { record } = await executeUserDataOperation(client, { supabaseUserId: userId }, {
+    action: 'verification.submit',
+    selfiePath,
+    idPath,
+    matchScore: 0.9,
+  }, admin)
+
+  assert.equal(record.status, 'pending')
+  assert.equal(client.calls.length, 1)
+})
+
+test('identity review rejects non-admins before attempting a status update', async () => {
+  const client = makeClient((sql) => {
+    assert.match(sql, /public\.has_role/)
+    return { rows: [{ is_admin: false }] }
+  })
+
+  await assert.rejects(
+    executeUserDataOperation(client, { supabaseUserId: userId }, {
+      action: 'verification.admin.review',
+      id: '123e4567-e89b-42d3-a456-426614174001',
+      status: 'approved',
+    }),
+    { status: 403 },
+  )
+  assert.equal(client.calls.length, 1)
+})

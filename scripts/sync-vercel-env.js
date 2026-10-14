@@ -8,7 +8,7 @@ const runtimeConfigPath = path.join(rootDir, '.vercel-runtime-env.json')
 const linkedProjectPath = path.join(rootDir, '.vercel', 'project.json')
 const dryRun = process.argv.includes('--dry-run')
 
-const ENV_KEYS = [
+const REQUIRED_ENV_KEYS = [
   'VITE_SUPABASE_URL',
   'VITE_SUPABASE_ANON_KEY',
   'SUPABASE_URL',
@@ -18,11 +18,24 @@ const ENV_KEYS = [
   'RESEND_FROM',
 ]
 
+const OPTIONAL_ENV_KEYS = [
+  'VITE_APPWRITE_ENDPOINT',
+  'VITE_APPWRITE_PROJECT_ID',
+  'APPWRITE_ENDPOINT',
+  'APPWRITE_PROJECT_ID',
+  'SUPABASE_POOLER_URL',
+]
+
 const PUBLIC_KEYS = new Set([
   'VITE_SUPABASE_URL',
   'VITE_SUPABASE_ANON_KEY',
+  'VITE_AUTH_PROVIDER',
+  'VITE_APPWRITE_ENDPOINT',
+  'VITE_APPWRITE_PROJECT_ID',
   'SUPABASE_URL',
   'SUPABASE_ANON_KEY',
+  'APPWRITE_ENDPOINT',
+  'APPWRITE_PROJECT_ID',
   'RESEND_FROM',
 ])
 
@@ -66,11 +79,24 @@ function invalidValue(value) {
 
 function loadValues() {
   const config = loadJson(runtimeConfigPath, 'Generated runtime environment')
-  const missing = ENV_KEYS.filter((key) => invalidValue(config[key]))
+  const provider = String(config.VITE_AUTH_PROVIDER || 'supabase').trim().toLowerCase()
+  if (!['supabase', 'appwrite'].includes(provider)) {
+    throw new Error('VITE_AUTH_PROVIDER must be either supabase or appwrite.')
+  }
+
+  const requiredKeys = [
+    ...REQUIRED_ENV_KEYS,
+    'VITE_AUTH_PROVIDER',
+    ...(provider === 'appwrite' ? OPTIONAL_ENV_KEYS : []),
+  ]
+  const missing = requiredKeys.filter((key) => invalidValue(config[key]))
   if (missing.length) {
     throw new Error(`Missing or placeholder values in generated environment: ${missing.join(', ')}`)
   }
-  return Object.fromEntries(ENV_KEYS.map((key) => [key, String(config[key])]))
+  return {
+    ...Object.fromEntries(requiredKeys.map((key) => [key, String(config[key])])),
+    VITE_AUTH_PROVIDER: provider,
+  }
 }
 
 async function request(pathname, { method = 'GET', body } = {}) {
@@ -117,7 +143,7 @@ function getProductionMatch(envs, key) {
 
 async function upsertProductionVariables(values, projectId, envs) {
   const projectPath = `/v10/projects/${encodeURIComponent(projectId)}/env`
-  for (const key of ENV_KEYS) {
+  for (const key of Object.keys(values)) {
     const variable = {
       value: values[key],
       type: PUBLIC_KEYS.has(key) ? 'plain' : 'encrypted',
@@ -166,7 +192,7 @@ let teamId = ''
 
 async function main() {
   const values = loadValues()
-  for (const key of ENV_KEYS) console.log(`[vercel-env] ${key}: ready`)
+  for (const key of Object.keys(values)) console.log(`[vercel-env] ${key}: ready`)
 
   if (dryRun) {
     console.log('[vercel-env] Dry run complete; no Vercel changes were made.')

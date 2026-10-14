@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { appwriteData, isAppwriteAuthEnabled } from './appwrite'
 
 export const USDT_TIERS = [
   { id: 'plus_50', label: '+50 GB', amount: '1.99' },
@@ -7,6 +8,10 @@ export const USDT_TIERS = [
 ]
 
 export async function getPaymentSettings() {
+  if (isAppwriteAuthEnabled()) {
+    const { settings } = await appwriteData('payments.settings.get')
+    return settings
+  }
   const { data, error } = await supabase.from('payment_settings').select('*').eq('id', 1).maybeSingle()
   if (error) throw error
   if (!data) return null

@@ -29,15 +29,37 @@ for arbitrary user-data queries. The database pooler connection must
 authenticate as the Supabase `postgres` role so the gateway can switch to
 `authenticated` within each transaction.
 
+Admin authorization and data now have gateway actions for the dashboard,
+member management, payment review/settings and webhook history, verification
+review, and configuration diagnostics. The payment, invoice, billing-history,
+verification-status, badge, and submission screens use those actions when
+Appwrite is selected. Queues poll the gateway instead of opening Supabase
+Realtime channels. Payment QR and identity-document uploads use scoped,
+single-object Storage upload tokens; the gateway validates the stored object's
+actual type and size before saving its path. Browsers still need the Supabase
+project URL and public key to redeem these upload tokens; no service-role key
+is sent to the browser.
+
 ## Not yet migrated
 
-This remains a staged cutover. Browser-side admin operations, payment/billing
-operations, identity-document and payment-QR storage, verification flows, and
-other Supabase-backed surfaces have not been moved to the gateway. Supabase
+This remains a staged cutover. The BioWriter Edge Function is deliberately
+disabled while Appwrite is selected; it still uses Supabase Auth and needs a
+verified Appwrite-backed server path before it can be re-enabled. Other
+ancillary Supabase-backed flows also need migration and verification. Supabase
 Auth/Data/Storage/Realtime remain the default provider and fallback. Do not set
-`VITE_AUTH_PROVIDER=appwrite` in production until those remaining screens and
-operations have been migrated and tested. In particular, the current
-Appwrite-mode UI is not yet suitable for admin or payment workflows.
+`VITE_AUTH_PROVIDER=appwrite` in production until all enabled screens and
+operations have been migrated, the migration applied, and the complete
+Appwrite path tested in the deployed environment. No production database or
+Vercel configuration has been applied from this workspace.
+
+The production workflow's explicit Appwrite switch applies the identity-link
+migration or fresh-project schema, validates the required server settings and
+an explicit staging-readiness confirmation, sets the provider for Vercel
+Production, and triggers the configured Production deploy hook. The workflow
+only confirms the deployment was queued;
+verify the deployment reaches Ready and test sign-in/data access before
+considering production cut over. Leave the switch off to keep Vercel on
+Supabase Auth.
 
 ## Server configuration
 
@@ -56,6 +78,10 @@ For a client build, also set the browser-visible Vite variables:
 `VITE_AUTH_PROVIDER`. Appwrite endpoint/project IDs are public identifiers, not
 secrets. A Vercel build also needs these values in its build environment. Keep
 the provider set to `supabase` until the complete migration is ready.
+
+For the GitHub production workflow, add a Vercel Production deploy hook URL as
+the `VERCEL_DEPLOY_HOOK_URL` Actions secret. It is required only when enabling
+Appwrite and is treated like a credential; do not commit or share it.
 
 In the Appwrite Console, allow the production web origin (`nexus-chat-world.com`)
 as a Web platform and enable the password policy option that rejects breached

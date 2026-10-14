@@ -4,6 +4,7 @@ import { ArrowLeft, Download, Printer, Share2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import { formatBytes } from '../lib/storageManager'
+import { appwriteData, isAppwriteAuthEnabled } from '../lib/appwrite'
 
 const STATUS = { completed: 'Paid', awaiting_approval: 'Awaiting approval', rejected: 'Rejected', pending: 'Pending', failed: 'Failed' }
 
@@ -30,9 +31,24 @@ export default function InvoicePage() {
   const [msg, setMsg] = useState('')
 
   useEffect(() => {
-    if (!supabase) return
-    supabase.from('storage_purchases').select('*').eq('id', purchaseId).maybeSingle()
-      .then(({ data, error }) => (error ? setMsg(error.message) : data ? setP(data) : setMsg('Invoice not found.')))
+    if ((!supabase && !isAppwriteAuthEnabled()) || !purchaseId) return
+    const load = async () => {
+      try {
+        if (isAppwriteAuthEnabled()) {
+          const { purchase } = await appwriteData('payments.purchase.get', { purchaseId })
+          if (!purchase) throw new Error('Invoice not found.')
+          setP(purchase)
+        } else {
+          const { data, error } = await supabase.from('storage_purchases').select('*').eq('id', purchaseId).maybeSingle()
+          if (error) throw error
+          if (!data) throw new Error('Invoice not found.')
+          setP(data)
+        }
+      } catch (error) {
+        setMsg(error.message || 'Could not load invoice.')
+      }
+    }
+    load()
   }, [purchaseId])
 
   if (!p) return <div className="p-8 text-center text-muted-foreground">{msg || 'Loading invoice…'}</div>

@@ -5,6 +5,7 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/AuthContext'
 import { formatBytes } from '../../../lib/storageManager'
 import { USDT_TIERS, getPaymentSettings } from '../../../lib/usdtPayments'
+import { appwriteData, isAppwriteAuthEnabled } from '../../../lib/appwrite'
 
 const STATUS_LABEL = { awaiting_approval: 'Waiting approval', completed: 'Completed', rejected: 'Rejected', pending: 'Pending', failed: 'Failed' }
 
@@ -20,19 +21,43 @@ export default function StorageUpgrades() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!supabase || !user?.id) return
-    supabase.from('storage_purchases').select('*').eq('user_id', user.id)
-      .order('created_at', { ascending: false }).limit(50)
-      .then(({ data }) => setPurchases(data || []))
-    getPaymentSettings().then(setSettings).catch(() => setSettings(null))
+    if ((!supabase && !isAppwriteAuthEnabled()) || !user?.id) return
+    const load = async () => {
+      try {
+        if (isAppwriteAuthEnabled()) {
+          const { purchases } = await appwriteData('payments.purchase.list')
+          setPurchases(purchases || [])
+        } else {
+          const { data, error: queryError } = await supabase.from('storage_purchases').select('*').eq('user_id', user.id)
+            .order('created_at', { ascending: false }).limit(50)
+          if (queryError) throw queryError
+          setPurchases(data || [])
+        }
+        setSettings(await getPaymentSettings())
+      } catch (loadError) {
+        setError(loadError.message || 'Could not load storage payment details.')
+      }
+    }
+    load()
   }, [user?.id])
 
   const paid = async () => {
     setBusy(true); setError('')
-    const { data, error: e } = await supabase.rpc('submit_usdt_payment', { _tier: tier.id, _tx_reference: txRef })
-    setBusy(false)
-    if (e) return setError(e.message)
-    navigate(`/app/payment/${data}`)
+    try {
+      let purchaseId
+      if (isAppwriteAuthEnabled()) {
+        ({ purchaseId } = await appwriteData('payments.submit', { tier: tier.id, txReference: txRef }))
+      } else {
+        const { data, error: submitError } = await supabase.rpc('submit_usdt_payment', { _tier: tier.id, _tx_reference: txRef })
+        if (submitError) throw submitError
+        purchaseId = data
+      }
+      navigate(`/app/payment/${purchaseId}`)
+    } catch (submitError) {
+      setError(submitError.message || 'The payment could not be submitted.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   const copy = async () => {

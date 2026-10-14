@@ -331,10 +331,17 @@ export async function executeUserDataOperation(client, identity, body, admin) {
       const fileId = requiredString(body.fileId, 'File ID', 64)
       if (!validUuid(fileId)) throw new GatewayError('File ID is invalid.')
       const { rows } = await client.query(
-        `select id, storage_path from public.storage_files where id = $1`,
+        `select id, storage_path, size_bytes, mime_type from public.storage_files where id = $1`,
         [fileId],
       )
       if (!rows[0]) throw new GatewayError('The uploaded file is unavailable.', 404)
+      const { data: objectInfo, error: infoError } = await admin.storage.from('chat-files').info(rows[0].storage_path)
+      const actualSize = Number(objectInfo?.size ?? objectInfo?.metadata?.size)
+      const actualMime = String(objectInfo?.content_type || objectInfo?.metadata?.mimetype || '').toLowerCase()
+      if (infoError || !Number.isSafeInteger(actualSize) || actualSize !== Number(rows[0].size_bytes)
+        || actualMime !== String(rows[0].mime_type || '').toLowerCase()) {
+        throw new GatewayError('The uploaded file did not match its reserved type and size.', 400)
+      }
       const { data, error } = await admin.storage.from('chat-files').createSignedUrl(rows[0].storage_path, 60 * 60 * 24 * 365)
       if (error || !data?.signedUrl) throw new GatewayError('Could not create a secure file link.', 503)
       return { fileUrl: data.signedUrl }
@@ -453,6 +460,15 @@ export async function executeUserDataOperation(client, identity, body, admin) {
       if (path && !/^qr-[a-f0-9-]+\.(png|jpe?g|webp)$/i.test(path)) {
         throw new GatewayError('The QR image path is invalid.')
       }
+      if (path) {
+        const { data: image, error: infoError } = await admin.storage.from('payment-qr').info(path)
+        const sizeBytes = Number(image?.size ?? image?.metadata?.size)
+        const mimeType = String(image?.content_type || image?.metadata?.mimetype || '').toLowerCase()
+        if (infoError || !Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > 5 * 1024 * 1024
+          || !['image/png', 'image/jpeg', 'image/webp'].includes(mimeType)) {
+          throw new GatewayError('The uploaded QR image is invalid or exceeds 5 MB.')
+        }
+      }
       const { rows } = await client.query(
         `insert into public.payment_settings (id, wallet_address, qr_image_url, network)
          values (1, $1, $2, 'BEP20')
@@ -468,7 +484,8 @@ export async function executeUserDataOperation(client, identity, body, admin) {
       const fileName = requiredString(body.fileName, 'File name', 255)
       const mimeType = requiredString(body.mimeType, 'Image type', 100).toLowerCase()
       const extensions = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }
-      if (!extensions[mimeType] || Number(body.sizeBytes) > 5 * 1024 * 1024) {
+      const sizeBytes = Number(body.sizeBytes)
+      if (!extensions[mimeType] || !Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > 5 * 1024 * 1024) {
         throw new GatewayError('Choose a PNG, JPEG, or WebP image under 5 MB.')
       }
       const path = `qr-${randomUUID()}.${extensions[mimeType]}`
@@ -560,6 +577,21 @@ export async function executeUserDataOperation(client, identity, body, admin) {
       }
       const score = Number(body.matchScore)
       if (!Number.isFinite(score) || score < 0 || score > 1) throw new GatewayError('Face match score is invalid.')
+      const [selfie, document] = await Promise.all([
+        admin.storage.from('identity-docs').info(selfiePath),
+        admin.storage.from('identity-docs').info(idPath),
+      ])
+      const selfieSize = Number(selfie.data?.size ?? selfie.data?.metadata?.size)
+      const documentSize = Number(document.data?.size ?? document.data?.metadata?.size)
+      const selfieType = String(selfie.data?.content_type || selfie.data?.metadata?.mimetype || '').toLowerCase()
+      const documentType = String(document.data?.content_type || document.data?.metadata?.mimetype || '').toLowerCase()
+      const acceptedTypes = ['image/jpeg', 'image/png', 'image/webp']
+      if (selfie.error || document.error || !Number.isSafeInteger(selfieSize) || selfieSize < 1
+        || selfieSize > 15 * 1024 * 1024 || !Number.isSafeInteger(documentSize) || documentSize < 1
+        || documentSize > 15 * 1024 * 1024 || !acceptedTypes.includes(selfieType)
+        || !acceptedTypes.includes(documentType)) {
+        throw new GatewayError('The uploaded identity images are invalid or exceed 15 MB.')
+      }
       const { rows } = await client.query(
         `insert into public.identity_verifications
           (user_id, status, match_score, selfie_path, id_document_path, reviewer_note, reviewed_by, reviewed_at)
@@ -592,6 +624,7 @@ export async function executeUserDataOperation(client, identity, body, admin) {
       return { verifications: signedRows }
     }
     case 'verification.admin.review': {
+      await requireAdmin(client, supabaseUserId)
       const id = requiredString(body.id, 'Verification ID', 64)
       if (!validUuid(id) || !['approved', 'rejected'].includes(body.status)) {
         throw new GatewayError('Verification review details are invalid.')
@@ -610,7 +643,9 @@ export async function executeUserDataOperation(client, identity, body, admin) {
     case 'verification.upload.prepare': {
       const fileName = requiredString(body.fileName, 'File name', 255)
       const mimeType = requiredString(body.mimeType, 'Image type', 100).toLowerCase()
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType) || Number(body.sizeBytes) > 15 * 1024 * 1024) {
+      const sizeBytes = Number(body.sizeBytes)
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)
+        || !Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > 15 * 1024 * 1024) {
         throw new GatewayError('Identity images must be JPEG, PNG, or WebP and under 15 MB.')
       }
       const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80)
@@ -621,7 +656,34 @@ export async function executeUserDataOperation(client, identity, body, admin) {
     }
     case 'admin.diagnostics': {
       await requireAdmin(client, supabaseUserId)
-      return { allowed: true }
+      const checks = [
+        ['APPWRITE_ENDPOINT', process.env.APPWRITE_ENDPOINT],
+        ['APPWRITE_PROJECT_ID', process.env.APPWRITE_PROJECT_ID],
+        ['SUPABASE_URL', process.env.SUPABASE_URL],
+        ['SUPABASE_ANON_KEY', process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY],
+        ['SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY],
+        ['SUPABASE_POOLER_URL', process.env.SUPABASE_POOLER_URL],
+        ['RESEND_API_KEY', process.env.RESEND_API_KEY],
+        ['RESEND_FROM', process.env.RESEND_FROM],
+        ['NOWPAYMENTS_API_KEY', process.env.NOWPAYMENTS_API_KEY],
+        ['NOWPAYMENTS_IPN_SECRET', process.env.NOWPAYMENTS_IPN_SECRET],
+      ].map(([key, value]) => ({ key, configured: Boolean(String(value || '').trim()) }))
+      const tableNames = [
+        'members',
+        'chats',
+        'messages',
+        'storage_purchases',
+        'payment_settings',
+        'payment_webhook_events',
+        'identity_verifications',
+        'appwrite_identity_links',
+      ]
+      const { rows: tables } = await client.query(
+        `select name as table, to_regclass('public.' || name) is not null as ok
+           from unnest($1::text[]) as names(name)`,
+        [tableNames],
+      )
+      return { checks, tables }
     }
     default:
       throw new GatewayError('Unsupported data operation.', 404)

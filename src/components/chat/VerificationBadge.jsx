@@ -1,19 +1,26 @@
 import { useEffect, useState } from 'react'
 import { BadgeCheck } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { appwriteData, isAppwriteAuthEnabled } from '../../lib/appwrite'
 
 const cache = new Map()
 
 export function useVerificationBadge(userId) {
   const [level, setLevel] = useState(cache.get(userId) || 'none')
   useEffect(() => {
-    if (!supabase || !userId) return
+    if ((!supabase && !isAppwriteAuthEnabled()) || !userId) return
     if (cache.has(userId)) { setLevel(cache.get(userId)); return }
-    supabase.rpc('get_verification_badge', { _user_id: userId }).then(({ data }) => {
-      const value = data || 'none'
+    const load = isAppwriteAuthEnabled()
+      ? appwriteData('verification.badge', { userId }).then(({ badge }) => badge)
+      : supabase.rpc('get_verification_badge', { _user_id: userId }).then(({ data, error }) => {
+        if (error) throw error
+        return data
+      })
+    load.then((badge) => {
+      const value = badge || 'none'
       cache.set(userId, value)
       setLevel(value)
-    })
+    }).catch((error) => console.error('Could not load verification badge', error))
   }, [userId])
   return level
 }

@@ -1,12 +1,14 @@
 import { useRef, useState } from 'react'
 import { Sparkles, X, Square } from 'lucide-react'
 import { supabase, getSupabaseConfig } from '../../../lib/supabase'
+import { isAppwriteAuthEnabled } from '../../../lib/appwrite'
 
 export default function BioWriter({ name, bio, setBio, interests, setInterests }) {
   const [tag, setTag] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const abortRef = useRef(null)
+  const appwriteEnabled = isAppwriteAuthEnabled()
 
   const addTag = () => {
     const t = tag.trim().replace(/,$/, '')
@@ -15,6 +17,10 @@ export default function BioWriter({ name, bio, setBio, interests, setInterests }
   }
 
   const write = async () => {
+    if (appwriteEnabled) {
+      setError('AI bio writing is not yet available with Appwrite sign-in.')
+      return
+    }
     setError(''); setBusy(true)
     const ctrl = new AbortController(); abortRef.current = ctrl
     try {
@@ -76,10 +82,12 @@ export default function BioWriter({ name, bio, setBio, interests, setInterests }
         />
         <button
           type="button" onClick={busy ? () => abortRef.current?.abort() : write}
-          className="inline-flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-xs font-semibold text-primary hover:bg-muted"
+          disabled={appwriteEnabled}
+          className="inline-flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-xs font-semibold text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? <><Square className="w-3.5 h-3.5" /> Stop</> : <><Sparkles className="w-3.5 h-3.5" /> Polish with AI</>}
         </button>
+        {appwriteEnabled && <p className="text-xs text-muted-foreground">AI bio writing is not yet available with Appwrite sign-in. You can still edit your bio manually.</p>}
         {error && <p className="text-xs text-destructive">{error}</p>}
         <p className="text-[11px] text-muted-foreground">You can edit the result before saving.</p>
       </div>

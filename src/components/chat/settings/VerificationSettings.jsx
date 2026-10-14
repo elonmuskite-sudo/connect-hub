@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Camera, IdCard, LoaderCircle } from 'lucide-react'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/AuthContext'
+import { appwriteData, isAppwriteAuthEnabled } from '../../../lib/appwrite'
 import VerificationBadge from '../VerificationBadge'
 
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model'
@@ -38,9 +39,24 @@ export default function VerificationSettings() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!supabase || !user?.id) return
-    supabase.from('identity_verifications').select('status, match_score, reviewer_note, created_at')
-      .eq('user_id', user.id).maybeSingle().then(({ data }) => setRecord(data))
+    if ((!supabase && !isAppwriteAuthEnabled()) || !user?.id) return
+    const load = async () => {
+      try {
+        if (isAppwriteAuthEnabled()) {
+          const { record: result } = await appwriteData('verification.get')
+          setRecord(result)
+        } else {
+          const { data, error: queryError } = await supabase.from('identity_verifications')
+            .select('status, match_score, reviewer_note, created_at')
+            .eq('user_id', user.id).maybeSingle()
+          if (queryError) throw queryError
+          setRecord(data)
+        }
+      } catch (loadError) {
+        setError(loadError.message || 'Could not load verification status.')
+      }
+    }
+    load()
     return () => streamRef.current?.getTracks().forEach((t) => t.stop())
   }, [user?.id])
 
@@ -80,19 +96,44 @@ export default function VerificationSettings() {
       if (distance > 0.6) throw new Error('Your selfie does not match the ID photo. Please try again.')
 
       setBusy('Uploading securely…')
-      const stamp = Date.now()
-      const selfiePath = `${user.id}/selfie-${stamp}.jpg`
-      const idPath = `${user.id}/id-${stamp}.${(idDoc.name?.split('.').pop() || 'jpg').toLowerCase()}`
-      const up1 = await supabase.storage.from('identity-docs').upload(selfiePath, selfie, { contentType: 'image/jpeg' })
-      if (up1.error) throw up1.error
-      const up2 = await supabase.storage.from('identity-docs').upload(idPath, idDoc, { contentType: idDoc.type })
-      if (up2.error) throw up2.error
-      const { error: insError } = await supabase.from('identity_verifications').upsert({
-        user_id: user.id, status: 'pending', match_score: Number(score.toFixed(3)),
-        selfie_path: selfiePath, id_document_path: idPath, reviewer_note: null, reviewed_by: null, reviewed_at: null,
-      }, { onConflict: 'user_id' })
-      if (insError) throw insError
-      setRecord({ status: 'pending', match_score: score })
+      if (isAppwriteAuthEnabled()) {
+        if (!supabase) throw new Error('Secure identity uploads are not configured.')
+        const upload = async (blob, fileName, mimeType) => {
+          const { path, token } = await appwriteData('verification.upload.prepare', {
+            fileName,
+            mimeType,
+            sizeBytes: blob.size,
+          })
+          const { error: uploadError } = await supabase.storage.from('identity-docs')
+            .uploadToSignedUrl(path, token, blob, { contentType: mimeType })
+          if (uploadError) throw uploadError
+          return path
+        }
+        const [selfiePath, idPath] = await Promise.all([
+          upload(selfie, 'selfie.jpg', 'image/jpeg'),
+          upload(idDoc, idDoc.name || 'identity-document', idDoc.type),
+        ])
+        const { record: result } = await appwriteData('verification.submit', {
+          selfiePath,
+          idPath,
+          matchScore: Number(score.toFixed(3)),
+        })
+        setRecord(result)
+      } else {
+        const stamp = Date.now()
+        const selfiePath = `${user.id}/selfie-${stamp}.jpg`
+        const idPath = `${user.id}/id-${stamp}.${(idDoc.name?.split('.').pop() || 'jpg').toLowerCase()}`
+        const up1 = await supabase.storage.from('identity-docs').upload(selfiePath, selfie, { contentType: 'image/jpeg' })
+        if (up1.error) throw up1.error
+        const up2 = await supabase.storage.from('identity-docs').upload(idPath, idDoc, { contentType: idDoc.type })
+        if (up2.error) throw up2.error
+        const { error: insError } = await supabase.from('identity_verifications').upsert({
+          user_id: user.id, status: 'pending', match_score: Number(score.toFixed(3)),
+          selfie_path: selfiePath, id_document_path: idPath, reviewer_note: null, reviewed_by: null, reviewed_at: null,
+        }, { onConflict: 'user_id' })
+        if (insError) throw insError
+        setRecord({ status: 'pending', match_score: score })
+      }
     } catch (err) {
       setError(err.message || 'Verification could not be submitted.')
     } finally {

@@ -1,35 +1,63 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { useAuth } from '../lib/AuthContext'
-
-async function signed(path) {
-  const { data } = await supabase.storage.from('identity-docs').createSignedUrl(path, 600)
-  return data?.signedUrl
-}
+import { appwriteData, isAppwriteAuthEnabled } from '../lib/appwrite'
 
 export default function IdentityReviewQueue() {
-  const { user } = useAuth()
   const [rows, setRows] = useState([])
   const [notes, setNotes] = useState({})
   const [error, setError] = useState('')
 
-  const load = async () => {
-    if (!supabase) return
-    const { data, error: e } = await supabase.from('identity_verifications')
-      .select('*').eq('status', 'pending').order('created_at').limit(50)
-    if (e) return setError(e.message)
-    setRows(await Promise.all((data || []).map(async (r) => ({
-      ...r, selfieUrl: await signed(r.selfie_path), idUrl: await signed(r.id_document_path),
-    }))))
-  }
-  useEffect(() => { load() }, [])
+  const load = useCallback(async () => {
+    try {
+      if (isAppwriteAuthEnabled()) {
+        const { verifications } = await appwriteData('verification.admin.queue')
+        setRows(verifications || [])
+      } else {
+        const { data, error: queryError } = await supabase.from('identity_verifications')
+          .select('*').eq('status', 'pending').order('created_at').limit(50)
+        if (queryError) throw queryError
+        const signed = await Promise.all((data || []).map(async (row) => {
+          const [selfie, document] = await Promise.all([
+            supabase.storage.from('identity-docs').createSignedUrl(row.selfie_path, 600),
+            supabase.storage.from('identity-docs').createSignedUrl(row.id_document_path, 600),
+          ])
+          if (selfie.error) throw selfie.error
+          if (document.error) throw document.error
+          return { ...row, selfieUrl: selfie.data.signedUrl, idUrl: document.data.signedUrl }
+        }))
+        setRows(signed)
+      }
+      setError('')
+    } catch (loadError) {
+      setError(loadError.message || 'Could not load identity checks.')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isAppwriteAuthEnabled() && !supabase) return undefined
+    load()
+    if (isAppwriteAuthEnabled()) {
+      const timer = setInterval(load, 15000)
+      return () => clearInterval(timer)
+    }
+    return undefined
+  }, [load])
 
   const decide = async (id, status) => {
-    const { error: e } = await supabase.from('identity_verifications').update({
-      status, reviewer_note: notes[id] || null,
-    }).eq('id', id)
-    if (e) return setError(e.message)
-    setRows((r) => r.filter((x) => x.id !== id))
+    try {
+      if (isAppwriteAuthEnabled()) {
+        await appwriteData('verification.admin.review', { id, status, note: notes[id] || null })
+      } else {
+        const { error: updateError } = await supabase.from('identity_verifications').update({
+          status, reviewer_note: notes[id] || null,
+        }).eq('id', id)
+        if (updateError) throw updateError
+      }
+      setRows((r) => r.filter((x) => x.id !== id))
+      setError('')
+    } catch (reviewError) {
+      setError(reviewError.message || 'The identity check could not be reviewed.')
+    }
   }
 
   return (

@@ -6,7 +6,7 @@ name: Set up production (Supabase database + Vercel env)
 #   SUPABASE_DB_URL, SUPABASE_SERVICE_ROLE_KEY, VERCEL_TOKEN, VERCEL_PROJECT_ID, VERCEL_ORG_ID,
 #   SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF, RESEND_API_KEY, RESEND_FROM,
 #   NOWPAYMENTS_API_KEY, NOWPAYMENTS_IPN_SECRET, APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID,
-#   SUPABASE_POOLER_URL
+#   SUPABASE_POOLER_URL, VERCEL_DEPLOY_HOOK_URL (required only for Appwrite cutover)
 on:
   workflow_dispatch:
     inputs:
@@ -24,12 +24,47 @@ on:
         description: 'Apply the Appwrite identity-link table migration to an existing database'
         type: boolean
         default: false
+      enable_appwrite:
+        description: 'Switch Vercel production build to Appwrite Auth after all Appwrite paths have been verified'
+        type: boolean
+        default: false
+      confirm_appwrite_ready:
+        description: 'Confirm all enabled Appwrite Auth/data/storage paths were migrated and tested in a staging deployment'
+        type: boolean
+        default: false
 
 jobs:
   setup:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate Appwrite cutover prerequisites
+        if: ${{ inputs.enable_appwrite }}
+        env:
+          ENABLE_APPWRITE: ${{ inputs.enable_appwrite }}
+          CONFIRM_APPWRITE_READY: ${{ inputs.confirm_appwrite_ready }}
+          RUN_SQL: ${{ inputs.run_sql }}
+          APPLY_APPWRITE_MIGRATION: ${{ inputs.apply_appwrite_migration }}
+          APPWRITE_ENDPOINT: ${{ secrets.APPWRITE_ENDPOINT }}
+          APPWRITE_PROJECT_ID: ${{ secrets.APPWRITE_PROJECT_ID }}
+          SUPABASE_POOLER_URL: ${{ secrets.SUPABASE_POOLER_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          VERCEL_DEPLOY_HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: |
+          test "$ENABLE_APPWRITE" = "true" || { echo "Appwrite cutover was not explicitly selected."; exit 1; }
+          test "$CONFIRM_APPWRITE_READY" = "true" || { echo "Verify all enabled Appwrite paths in staging, then explicitly confirm readiness."; exit 1; }
+          if [ "$RUN_SQL" != "true" ] && [ "$APPLY_APPWRITE_MIGRATION" != "true" ]; then
+            echo "Appwrite cannot be enabled until the identity-link migration is applied. Select the migration step or fresh-project schema setup."
+            exit 1
+          fi
+          test -n "$APPWRITE_ENDPOINT" || { echo "Add APPWRITE_ENDPOINT to GitHub repo secrets first."; exit 1; }
+          test -n "$APPWRITE_PROJECT_ID" || { echo "Add APPWRITE_PROJECT_ID to GitHub repo secrets first."; exit 1; }
+          test -n "$SUPABASE_POOLER_URL" || { echo "Add SUPABASE_POOLER_URL to GitHub repo secrets first."; exit 1; }
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || { echo "Add SUPABASE_SERVICE_ROLE_KEY to GitHub repo secrets first."; exit 1; }
+          test -n "$SUPABASE_DB_URL" || { echo "Add SUPABASE_DB_URL to GitHub repo secrets first."; exit 1; }
+          test -n "$VERCEL_DEPLOY_HOOK_URL" || { echo "Create a Vercel Production deploy hook and add its URL as VERCEL_DEPLOY_HOOK_URL."; exit 1; }
 
       - name: Run database schema
         if: ${{ inputs.run_sql }}
@@ -83,6 +118,8 @@ jobs:
           APPWRITE_ENDPOINT: ${{ secrets.APPWRITE_ENDPOINT }}
           APPWRITE_PROJECT_ID: ${{ secrets.APPWRITE_PROJECT_ID }}
           SUPABASE_POOLER_URL: ${{ secrets.SUPABASE_POOLER_URL }}
+          AUTH_PROVIDER: ${{ inputs.enable_appwrite && 'appwrite' || 'supabase' }}
+          VERCEL_DEPLOY_HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
         run: |
           test -n "$VERCEL_TOKEN" && test -n "$VERCEL_PROJECT_ID" || { echo "Add VERCEL_TOKEN and VERCEL_PROJECT_ID repo secrets first."; exit 1; }
           test -n "$SERVICE_ROLE" || { echo "Add SUPABASE_SERVICE_ROLE_KEY to GitHub repo secrets first."; exit 1; }
@@ -101,7 +138,7 @@ jobs:
           [ "$code" -lt 300 ] && jq -e '.envs | type == "array"' "$env_file" >/dev/null || { echo "Failed to list Vercel environment variables (HTTP $code)."; exit 1; }
           put() { # name value type
             [ -n "$2" ] || { echo "Missing value for $1."; exit 1; }
-            body=$(jq -n --arg k "$1" --arg v "$2" --arg t "$3" '{key:$k,value:$v,type:$t,target:["production","preview"]}')
+            body=$(jq -n --arg k "$1" --arg v "$2" --arg t "$3" '{key:$k,value:$v,type:$t,target:["production"]}')
             match_count=$(jq --arg key "$1" '[.envs[]? | select(.key == $key and ((.target // []) | index("production")) and ((.gitBranch // "") == ""))] | length' "$env_file")
             if [ "$match_count" -gt 1 ]; then
               echo "Multiple Production variables exist for $1; resolve duplicates in Vercel first."
@@ -120,7 +157,7 @@ jobs:
             fi
             code=$(curl -sS -o "$response_file" -w '%{http_code}' -X "$method" "$endpoint" \
               -H "Authorization: Bearer $VERCEL_TOKEN" -H 'Content-Type: application/json' -d "$body")
-            [ "$code" -lt 300 ] && echo "$label $1 (Production and Preview)" || { echo "Failed to set $1 in Vercel (HTTP $code)."; exit 1; }
+            [ "$code" -lt 300 ] && echo "$label $1 (Production)" || { echo "Failed to set $1 in Vercel (HTTP $code)."; exit 1; }
           }
           put VITE_SUPABASE_URL "$IN_URL" plain
           put SUPABASE_URL "$IN_URL" plain
@@ -129,14 +166,23 @@ jobs:
           put SUPABASE_SERVICE_ROLE_KEY "$SERVICE_ROLE" sensitive
           put RESEND_API_KEY "$RESEND_API_KEY" sensitive
           put RESEND_FROM "$RESEND_FROM" plain
-          if [ -n "$APPWRITE_ENDPOINT$APPWRITE_PROJECT_ID$SUPABASE_POOLER_URL" ]; then
-            test -n "$APPWRITE_ENDPOINT" || { echo "Add APPWRITE_ENDPOINT to GitHub repo secrets."; exit 1; }
-            test -n "$APPWRITE_PROJECT_ID" || { echo "Add APPWRITE_PROJECT_ID to GitHub repo secrets."; exit 1; }
-            test -n "$SUPABASE_POOLER_URL" || { echo "Add SUPABASE_POOLER_URL to GitHub repo secrets."; exit 1; }
+          put VITE_AUTH_PROVIDER "$AUTH_PROVIDER" plain
+          if [ "$AUTH_PROVIDER" = "appwrite" ]; then
             put APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT" plain
             put APPWRITE_PROJECT_ID "$APPWRITE_PROJECT_ID" plain
             put SUPABASE_POOLER_URL "$SUPABASE_POOLER_URL" sensitive
             put VITE_APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT" plain
             put VITE_APPWRITE_PROJECT_ID "$APPWRITE_PROJECT_ID" plain
           fi
-          echo "Done. Redeploy in Vercel to apply."
+          if [ "$AUTH_PROVIDER" = "appwrite" ]; then
+            hook_response="$(mktemp)"
+            trap 'rm -f "$env_file" "$response_file" "$hook_response"' EXIT
+            code=$(curl -sS -o "$hook_response" -w '%{http_code}' -X POST "$VERCEL_DEPLOY_HOOK_URL")
+            [ "$code" -lt 300 ] && jq -e '.job.state == "PENDING" or .job.state == "BUILDING"' "$hook_response" >/dev/null || {
+              echo "Vercel accepted environment values, but the production deploy hook failed (HTTP $code)."
+              exit 1
+            }
+            echo "Appwrite environment configured; production deployment triggered. Verify it reaches Ready in Vercel before announcing cutover."
+          else
+            echo "Supabase Auth environment configured. Redeploy in Vercel if these values changed."
+          fi

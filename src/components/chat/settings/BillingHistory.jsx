@@ -3,6 +3,7 @@ import { ExternalLink, LoaderCircle, Receipt } from 'lucide-react'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/AuthContext'
 import { formatBytes } from '../../../lib/storageManager'
+import { appwriteData, isAppwriteAuthEnabled } from '../../../lib/appwrite'
 
 const STATUS = {
   pending: { label: 'Awaiting payment', cls: 'bg-muted text-muted-foreground' },
@@ -23,13 +24,34 @@ export default function BillingHistory() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!supabase || !user?.id) { setLoading(false); return }
+    if ((!supabase && !isAppwriteAuthEnabled()) || !user?.id) { setLoading(false); return }
     let active = true
-    const load = () => supabase.from('storage_purchases')
-      .select('id, tier, added_bytes, amount_cents, currency, status, checkout_session_id, receipt_url, created_at, updated_at')
-      .eq('user_id', user.id).order('created_at', { ascending: false }).limit(200)
-      .then(({ data, error: e }) => { if (!active) return; if (e) setError(e.message); else setRows(data || []); setLoading(false) })
+    const load = async () => {
+      try {
+        const rows = isAppwriteAuthEnabled()
+          ? (await appwriteData('payments.purchase.list')).purchases
+          : await supabase.from('storage_purchases')
+            .select('id, tier, added_bytes, amount_cents, currency, status, checkout_session_id, receipt_url, created_at, updated_at')
+            .eq('user_id', user.id).order('created_at', { ascending: false }).limit(200)
+            .then(({ data, error: queryError }) => {
+              if (queryError) throw queryError
+              return data
+            })
+        if (active) {
+          setRows(rows || [])
+          setError('')
+        }
+      } catch (loadError) {
+        if (active) setError(loadError.message || 'Could not load billing history.')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
     load()
+    if (isAppwriteAuthEnabled()) {
+      const timer = setInterval(load, 15000)
+      return () => { active = false; clearInterval(timer) }
+    }
     const channel = supabase.channel(`billing-${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'storage_purchases', filter: `user_id=eq.${user.id}` }, load)
       .subscribe()
