@@ -1,14 +1,24 @@
+ HEAD
 # Nexus Chat
+
+# Connect Hub
+
+Connect to Github, Supabase, Appwrite, RESEND, firstly.
+ f9e5f6770589270fa1ac3ce90cd69e3bbd3a4e2f
 
 This project was built with [Lovable](https://lovable.dev).
 
 ## Build with Lovable
-
+ HEAD
 Continue developing this project in the [Lovable editor](https://lovable.dev/projects/d29b9902-8bf3-4839-8fdd-4a1aaa43a279).
+
+Continue developing this project in the [Lovable editor](https://lovable.dev/projects/6e437411-b925-4c71-97bd-aacd19f8afcf).
+ f9e5f6770589270fa1ac3ce90cd69e3bbd3a4e2f
 
 - **Ship faster**: describe what you want to build and Lovable handles the code.
 - **Stay in sync**: every change made in Lovable is committed straight to this repository.
 - **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+ HEAD
 
 ## Authentication setup
 
@@ -56,6 +66,8 @@ The Vercel sync command uploads application environment values to the Production
 	```
 
 The dry run reports missing variable names only. The sync command updates existing Production-only variables, creates missing ones, then removes the legacy public secret variables. It fails rather than changing variables currently shared with Preview or Development, so adjust those target scopes in Vercel first if prompted.
+
+ f9e5f6770589270fa1ac3ce90cd69e3bbd3a4e2f
 
 ## Development
 
