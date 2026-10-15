@@ -13,7 +13,7 @@
 - [x] Persistent sessions (Supabase persistSession + autoRefreshToken) and logout only in Settings and header profile dropdown.
 - [x] Contacts synced to Supabase per user with realtime updates across devices.
 - [x] Paid storage upgrades via NOWPayments (needs NOWPAYMENTS_API_KEY / NOWPAYMENTS_IPN_SECRET).
-- [ ] Facial ID verification + blue/gold badges — blocked: needs a facial-recognition provider (e.g. a third-party KYC API) choice and credentials.
+- [x] Facial ID verification (on-device face match) + blue/gold badges + admin review RPC; apply new schema SQL to production.
 
 # Backend credentials
 - [x] Use own Supabase; strip Appwrite; schema SQL + admin bootstrap; build needs only Supabase keys
