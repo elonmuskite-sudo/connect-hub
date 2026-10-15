@@ -21,9 +21,7 @@ export default function IdentityReviewQueue() {
             supabase.storage.from('identity-docs').createSignedUrl(row.selfie_path, 600),
             supabase.storage.from('identity-docs').createSignedUrl(row.id_document_path, 600),
           ])
-          if (selfie.error) throw selfie.error
-          if (document.error) throw document.error
-          return { ...row, selfieUrl: selfie.data.signedUrl, idUrl: document.data.signedUrl }
+          return { ...row, selfieUrl: selfie.data?.signedUrl || null, idUrl: document.data?.signedUrl || null }
         }))
         setRows(signed)
       }
@@ -48,9 +46,9 @@ export default function IdentityReviewQueue() {
       if (isAppwriteAuthEnabled()) {
         await appwriteData('verification.admin.review', { id, status, note: notes[id] || null })
       } else {
-        const { error: updateError } = await supabase.from('identity_verifications').update({
-          status, reviewer_note: notes[id] || null,
-        }).eq('id', id)
+        const { error: updateError } = await supabase.rpc('review_identity_verification', {
+          _id: id, _approve: status === 'approved', _note: notes[id] || null,
+        })
         if (updateError) throw updateError
       }
       setRows((r) => r.filter((x) => x.id !== id))
