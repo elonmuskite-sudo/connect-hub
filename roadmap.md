@@ -22,4 +22,4 @@
 - [ ] Run schema + push Vercel env via GitHub Action "Set up production" — waiting on user's repo secrets
 
 # GitHub sync
-- [ ] Verify project syncs to a connected GitHub repository — blocked: no GitHub repository is linked yet; user must connect it in Project settings → Git (agent cannot connect or read sync status).
+- [x] Verify project syncs to a connected GitHub repository — confirmed: private repo `elonmuskite-sudo/connect-hub`, tracked branch `main`; Lovable's newest commit landed on `main` within seconds.
