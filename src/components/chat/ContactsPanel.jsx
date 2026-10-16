@@ -11,7 +11,8 @@ export default function ContactsPanel() {
   const [contacts, setContacts] = useState([])
   const [chatError, setChatError] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
-  const [newContactName, setNewContactName] = useState('')
+  const [match, setMatch] = useState(null)
+  const [lookupState, setLookupState] = useState('')
   const [newContactNexusId, setNewContactNexusId] = useState('')
 
   useEffect(() => {
@@ -56,15 +57,26 @@ export default function ContactsPanel() {
     }
   }
 
+  useEffect(() => {
+    const digits = newContactNexusId.replace(/\D/g, '')
+    setMatch(null)
+    if (digits.length !== 10) { setLookupState(''); return }
+    let active = true
+    setLookupState('searching')
+    searchUserByNexusId(digits)
+      .then((found) => { if (active) { setMatch(found); setLookupState(found ? 'found' : 'missing') } })
+      .catch(() => { if (active) setLookupState('missing') })
+    return () => { active = false }
+  }, [newContactNexusId])
+
   const handleAddContact = async (e) => {
     e.preventDefault()
-    if (!newContactName.trim() || !newContactNexusId.trim()) return
-
+    if (!match) return
     await addContact({
-      name: newContactName.trim(),
+      name: match.fullName || 'Nexus user',
       nexusId: formatNexusId(newContactNexusId),
+      avatarUrl: match.avatarUrl || null,
     })
-    setNewContactName('')
     setNewContactNexusId('')
     setShowAddModal(false)
   }
@@ -163,27 +175,29 @@ export default function ContactsPanel() {
             </div>
             <form onSubmit={handleAddContact} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-foreground mb-1">Name</label>
-                <input
-                  type="text"
-                  value={newContactName}
-                  onChange={(e) => setNewContactName(e.target.value)}
-                  placeholder="Enter contact name"
-                  className="w-full px-4 py-2 bg-muted border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                  required
-                />
-              </div>
-              <div>
                 <label className="block text-sm font-medium text-foreground mb-1">Nexus ID</label>
                 <input
                   type="text"
+                  inputMode="numeric"
+                  autoFocus
                   value={newContactNexusId}
-                  onChange={(e) => setNewContactNexusId(e.target.value)}
+                  onChange={(e) => setNewContactNexusId(e.target.value.replace(/[^\d-]/g, '').slice(0, 12))}
                   placeholder="10-XXXX-XXXX"
                   className="w-full px-4 py-2 bg-muted border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                   required
                 />
                 <p className="text-xs text-muted-foreground mt-1">Enter the 10-digit Nexus ID (e.g., 1012345678)</p>
+                {lookupState === 'searching' && <p className="text-xs text-muted-foreground mt-2">Looking up…</p>}
+                {lookupState === 'missing' && <p className="text-xs text-destructive mt-2">No account found for this Nexus ID.</p>}
+                {match && (
+                  <div className="mt-3 flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/10 p-3 animate-in fade-in zoom-in-95 duration-200">
+                    <Avatar src={match.avatarUrl} alt={match.fullName} size="md" />
+                    <div className="min-w-0">
+                      <p className="font-semibold text-foreground truncate">{match.fullName || 'Nexus user'}</p>
+                      <p className="text-xs text-muted-foreground">{formatNexusId(newContactNexusId)}</p>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex gap-3 pt-2">
                 <button
