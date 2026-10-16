@@ -155,7 +155,7 @@ export default function VerificationSettings() {
           <p className="text-sm text-foreground">
             {record?.status === 'approved' ? 'You are Verified (gold badge).'
               : record?.status === 'pending' ? 'Your documents were received. This page updates automatically once review is complete.'
-              : record?.status === 'rejected' ? 'Your verification could not be completed. Please submit again.'
+              : record?.status === 'rejected' ? `Your documents were not accepted${record.reviewer_note ? ` — reason: ${record.reviewer_note}` : ''}. Please submit again.`
               : 'Verify with a selfie and a government ID to earn the gold Verified badge.'}
           </p>
         </div>
