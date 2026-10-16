@@ -57,7 +57,8 @@ export default function VerificationSettings() {
       }
     }
     load()
-    return () => streamRef.current?.getTracks().forEach((t) => t.stop())
+    const timer = setInterval(load, 10000)
+    return () => { clearInterval(timer); streamRef.current?.getTracks().forEach((t) => t.stop()) }
   }, [user?.id])
 
   const startCamera = async () => {
@@ -145,12 +146,19 @@ export default function VerificationSettings() {
     <div className="space-y-5">
       <div className="flex items-center gap-2 rounded-2xl border border-border bg-muted/30 p-4">
         <VerificationBadge userId={user?.id} className="w-6 h-6" />
-        <p className="text-sm text-foreground">
-          {record?.status === 'approved' ? 'You are Authenticated (gold badge).'
-            : record?.status === 'pending' ? 'Your faces matched. A reviewer is confirming your ID.'
-            : record?.status === 'rejected' ? `Verification rejected${record.reviewer_note ? `: ${record.reviewer_note}` : ''}.`
-            : 'Verify with a selfie and a government ID to earn the gold Authenticated badge.'}
-        </p>
+        <div>
+          {record?.status && (
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {record.status === 'approved' ? 'Verified' : record.status === 'pending' ? 'Pending Verification' : 'Not verified'}
+            </p>
+          )}
+          <p className="text-sm text-foreground">
+            {record?.status === 'approved' ? 'You are Verified (gold badge).'
+              : record?.status === 'pending' ? 'Your documents were received. This page updates automatically once review is complete.'
+              : record?.status === 'rejected' ? 'Your verification could not be completed. Please submit again.'
+              : 'Verify with a selfie and a government ID to earn the gold Verified badge.'}
+          </p>
+        </div>
       </div>
 
       {(!record || record.status === 'rejected') && (
