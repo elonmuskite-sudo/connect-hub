@@ -20,3 +20,6 @@
 - [ ] Fill Vercel env vars, run schema SQL, set NOWPayments/Resend function secrets in Supabase — waiting on user
 - [x] Admin diagnostics page (/admin/diagnostics) and member billing history (Settings → Billing history)
 - [ ] Run schema + push Vercel env via GitHub Action "Set up production" — waiting on user's repo secrets
+
+# GitHub sync
+- [ ] Verify project syncs to a connected GitHub repository — blocked: no GitHub repository is linked yet; user must connect it in Project settings → Git (agent cannot connect or read sync status).
