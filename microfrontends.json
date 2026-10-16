@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/microfrontends.json",
+  "applications": {
+    "nexus-chat": {
+      "development": {
+        "fallback": "nexus-chat-sandy-alpha.vercel.app"
+      },
+      "production": {
+        "fallback": "nexus-chat-sandy-alpha.vercel.app"
+      }
+    }
+  }
+}

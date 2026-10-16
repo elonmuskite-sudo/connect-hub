@@ -1,0 +1,14 @@
+{
+  "name": "User",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "role": {
+        "type": "string",
+        "enum": ["admin", "user"],
+        "default": "user"
+      }
+    },
+    "required": []
+  }
+}
